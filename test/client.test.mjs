@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import { createMiniReact } from './mini-react.mjs'
 
 /**
  * 浏览器半的冒烟测试：在没有浏览器的情况下评估 bundle 主体，
- * 验证模块表契约（id / factory）与两条座位注册。
+ * 验证模块表契约（id / factory）、两条座位注册，以及交互路径。
  *
- * 这里用假 React 与假 DOM —— 被测的是插件面与注册协议，不是渲染结果。
+ * 这里用假 React 与假 DOM —— 被测的是插件面、注册协议与事件接线，不是像素结果。
+ * 交互测试可注入 `test/mini-react.mjs` 的运行时，让 useState/useEffect 真的生效。
  */
-function loadBundle() {
+function loadBundle(options = {}) {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 
   const registry = {}
@@ -16,7 +18,7 @@ function loadBundle() {
   const listeners = new Map()
   const intervals = []
 
-  const React = {
+  const React = options.ReactImpl ?? {
     createElement: (type, props, ...children) => ({ type, props, children }),
     useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}],
     useEffect: () => {},
@@ -35,8 +37,15 @@ function loadBundle() {
         this.values.set(key, value)
       },
     },
-    addEventListener: (name, listener) => { listeners.set(name, listener) },
-    removeEventListener: name => { listeners.delete(name) },
+    addEventListener(name, listener, opts) {
+      const list = listeners.get(name) ?? []
+      list.push({ listener, opts })
+      listeners.set(name, list)
+    },
+    removeEventListener(name, listener) {
+      const list = listeners.get(name) ?? []
+      listeners.set(name, list.filter(entry => entry.listener !== listener))
+    },
     setInterval: (callback, ms) => { intervals.push({ callback, ms }); return intervals.length },
     clearInterval: () => {},
   }
@@ -55,12 +64,17 @@ function loadBundle() {
   // bundle 主体是脚本：跑在受控的 window/document 下，它只做一次 self-register。
   new Function('window', 'document', 'require', source)(windowStub, documentStub, requireModule)
 
-  return { registry, styles, listeners, intervals, React, requireModule, windowStub }
+  /** 触发某个 window 事件名上的全部监听（模拟浏览器派发）。 */
+  const dispatch = (name, event) => {
+    for (const entry of listeners.get(name) ?? []) entry.listener(event)
+  }
+
+  return { registry, styles, listeners, intervals, React, requireModule, windowStub, dispatch }
 }
 
 /** 用假 ctx 调 apply，捕获座位的注册与副作用标签。 */
-function mountClient() {
-  const bundle = loadBundle()
+function mountClient(options = {}) {
+  const bundle = loadBundle(options)
   assert.ok(bundle.registry.definition, 'bundle 必须先向 __ModuleLoader__ 注册自己')
 
   const exported = bundle.registry.definition.factory(bundle.requireModule)
@@ -368,8 +382,120 @@ test('面板：拖动过则改为显式坐标，标题栏承载拖动与复位',
   const header = node.children[0]
   assert.equal(header.props.style, undefined, '标题栏样式来自样式表，不写内联')
   assert.equal(typeof header.props.onPointerDown, 'function')
-  assert.equal(typeof header.props.onPointerMove, 'function')
-  assert.equal(typeof header.props.onPointerUp, 'function')
+  assert.equal(typeof header.props.onDoubleClick, 'function')
   header.props.onDoubleClick()
   assert.equal(reset, 1, '双击标题栏复位位置')
+})
+
+/* ------------------------------------------------------ 交互路径（真 hooks） */
+
+/** 按 aria-label 找一个按钮。 */
+function findButton(node, label, depth = 0) {
+  if (depth > 20 || node === null || typeof node !== 'object') return null
+  if (typeof node.type === 'function') return findButton(node.type({ ...node.props, children: node.children }), label, depth + 1)
+  if (node.props && node.props['aria-label'] === label) return node
+  for (const child of node.children || []) {
+    const found = findButton(child, label, depth + 1)
+    if (found) return found
+  }
+  return null
+}
+
+/** 挂载面板并返回 { tree, store, dispatch, mini }，hooks 是真实的。 */
+function mountPanel(state = {}, options = {}) {
+  const mini = createMiniReact()
+  const bundle = mountClient({ ReactImpl: mini.React })
+  const calls = { openPanel: [], movePanel: [], commitPanel: [], resetPanel: 0 }
+  // 快照是可变对象：movePanel 必须更新它，否则「松开时从 store 现读位置」读不到东西。
+  const snapshot = { phase: 'ready', sessionId: 'session-1', cwd: '/Users/me/project', panelOpen: true, status: statusFixture(), ...state }
+  const store = {
+    ...fakeStore(snapshot),
+    openPanel: value => { calls.openPanel.push(value) },
+    movePanel: (pos) => { calls.movePanel.push(pos); snapshot.pos = pos },
+    commitPanel: pos => { calls.commitPanel.push(pos) },
+    resetPanel: () => { calls.resetPanel += 1 },
+  }
+  const tree = mini.mount(bundle.components['dsh-hud-panel'], { t: T, store })
+  return { tree, store, calls, mini, bundle }
+}
+
+test('面板：✕ 按钮的 onClick 直接收起面板', () => {
+  const { tree, calls } = mountPanel()
+  const close = findButton(tree, 'panel.close')
+  assert.ok(close, '必须能找到关闭按钮')
+  close.props.onClick()
+  assert.deepEqual(calls.openPanel, [false])
+})
+
+test('交互：按在按钮上不会开始拖动（回归：指针捕获曾让 ✕ 永远点不动）', () => {
+  const { tree, bundle } = mountPanel()
+  const header = tree.children[0]
+  const captured = []
+  const fakeButton = { closest: selector => (selector === 'button' ? { tagName: 'BUTTON' } : null) }
+
+  header.props.onPointerDown({
+    button: 0,
+    pointerId: 1,
+    clientX: 500,
+    clientY: 300,
+    target: fakeButton,
+    currentTarget: {
+      setPointerCapture: id => captured.push(id),
+      parentNode: { getBoundingClientRect: () => ({ left: 400, top: 200 }) },
+    },
+  })
+
+  assert.deepEqual(captured, [], '绝不能捕获指针：捕获会把 click 重定向到头部，按钮就失效了')
+  assert.equal(bundle.listeners.has('pointermove'), false, '按在按钮上不应开始拖动')
+})
+
+test('交互：在头部按下并移动才拖动，松开时落盘', () => {
+  const { tree, bundle, calls } = mountPanel()
+  const header = tree.children[0]
+
+  header.props.onPointerDown({
+    button: 0,
+    pointerId: 7,
+    clientX: 500,
+    clientY: 300,
+    target: { closest: () => null },
+    currentTarget: { parentNode: { getBoundingClientRect: () => ({ left: 400, top: 200 }) } },
+  })
+
+  const move = bundle.listeners.get('pointermove')?.[0]?.listener
+  const up = bundle.listeners.get('pointerup')?.[0]?.listener
+  assert.equal(typeof move, 'function', '按下后应注册 window 拖动监听')
+  assert.equal(typeof up, 'function')
+
+  // 小于阈值：不改变位置（头部上的普通点击不是拖动）。
+  move({ pointerId: 7, clientX: 501, clientY: 301 })
+  assert.deepEqual(calls.movePanel, [], '3px 以内不算拖动')
+
+  move({ pointerId: 7, clientX: 460, clientY: 260 })
+  assert.equal(calls.movePanel.length, 1)
+  assert.deepEqual(calls.movePanel[0], { left: 360, top: 160 }, '位置 = 指针 - 按下时的偏移，并夹进视口')
+
+  up({ pointerId: 7 })
+  assert.deepEqual(calls.commitPanel, [{ left: 360, top: 160 }], '松开时把位置落盘')
+  // 松开后应解除 window 监听。
+  assert.equal(bundle.listeners.get('pointermove')?.length ?? 0, 0)
+})
+
+test('交互：Esc 收起面板，且在捕获阶段监听（焦点在任何输入框里也能收到）', () => {
+  const { bundle, calls } = mountPanel()
+  const entries = bundle.listeners.get('keydown') ?? []
+  assert.equal(entries.length, 1, '应注册一个 keydown 监听')
+  assert.equal(entries[0].opts, true, '必须用捕获阶段')
+
+  entries[0].listener({ key: 'Escape' })
+  assert.deepEqual(calls.openPanel, [false])
+
+  entries[0].listener({ key: 'a' })
+  assert.deepEqual(calls.openPanel, [false], '其他按键不关面板')
+})
+
+test('交互：面板收起时不注册任何面板级监听', () => {
+  const { bundle } = mountPanel({ panelOpen: false })
+  assert.equal(bundle.listeners.has('keydown'), false)
+  assert.equal(bundle.listeners.has('pointermove'), false)
 })
