@@ -589,7 +589,7 @@ function findButton(node, label, depth = 0) {
 function mountPanel(state = {}, options = {}) {
   const mini = createMiniReact()
   const bundle = mountClient({ ReactImpl: mini.React })
-  const calls = { openPanel: [], movePanel: [], commitPanel: [], resetPanel: 0, diffWidth: [], closeDiff: 0, closeCommit: 0, persist: 0 }
+  const calls = { openPanel: [], movePanel: [], commitPanel: [], resetPanel: 0, diffWidth: [], closeDiff: 0, closeCommit: 0, persist: 0, stepFile: [], openCursor: 0, stepHunk: [], toggleHunk: [], refresh: 0 }
   // 快照是可变对象：movePanel 必须更新它，否则「松开时从 store 现读位置」读不到东西。
   const snapshot = { phase: 'ready', sessionId: 'session-1', cwd: '/Users/me/project', panelOpen: true, status: statusFixture(), diff: null, anchorTop: null, diffWidth: 470, ...state }
   const store = {
@@ -600,11 +600,18 @@ function mountPanel(state = {}, options = {}) {
     resetPanel: () => { calls.resetPanel += 1 },
     closeDiff: () => { calls.closeDiff += 1 },
     closeCommit: () => { calls.closeCommit += 1 },
+    stepFile: (delta, open) => { calls.stepFile.push([delta, open]) },
+    openCursor: () => { calls.openCursor += 1 },
+    stepHunk: delta => { calls.stepHunk.push(delta) },
+    toggleHunk: index => { calls.toggleHunk.push(index) },
+    refresh: () => { calls.refresh += 1 },
     setDiffWidth: (width) => { calls.diffWidth.push(width); snapshot.diffWidth = width },
     persistLayout: () => { calls.persist += 1 },
   }
   const tree = mini.mount(bundle.components['dsh-hud-panel'], { t: T, store })
-  return { tree, store, calls, mini, bundle }
+  // 键盘接管需要"在面板里按过指针"：这一步就是那一下。
+  const arm = () => { for (const entry of bundle.listeners.get('pointerdown') ?? []) entry.listener({ target: fakeNode('panel') }) }
+  return { tree, store, calls, mini, bundle, arm }
 }
 
 test('面板：✕ 按钮的 onClick 直接收起面板', () => {
@@ -738,6 +745,8 @@ function diffState(overrides = {}) {
       data: diffFixture(),
       side: 'worktree',
       wrap: false,
+      hunk: 0,
+      collapsed: [],
       errorCode: null,
       ...overrides,
     },
@@ -996,6 +1005,8 @@ function commitDiffState(overrides = {}) {
       data: { rows: diffFixture().worktree.rows, additions: 2, deletions: 1, hunks: 1, binary: false, truncated: false },
       side: 'commit',
       wrap: false,
+      hunk: 0,
+      collapsed: [],
       errorCode: null,
       ...overrides,
     },
@@ -1211,6 +1222,251 @@ test('提交视图（store）：换了工作区就把提交页收起（不能显
   assert.equal(store.getSnapshot().diff, null)
 })
 
+/* ------------------------------------------- hunk 折叠与当前 hunk（渲染） */
+
+/** 三个 hunk 的差异：够测 n/p 的边界与折叠。 */
+const MULTI_HUNK_ROWS = [
+  { kind: 'meta', text: 'diff --git a/a.ts b/a.ts', oldLine: null, newLine: null },
+  { kind: 'hunk', text: '@@ -1,1 +1,1 @@', oldLine: null, newLine: null },
+  { kind: 'ctx', text: 'first-hunk', oldLine: 1, newLine: 1 },
+  { kind: 'hunk', text: '@@ -10,1 +10,1 @@', oldLine: null, newLine: null },
+  { kind: 'ctx', text: 'second-hunk', oldLine: 10, newLine: 10 },
+  { kind: 'hunk', text: '@@ -20,1 +20,1 @@', oldLine: null, newLine: null },
+  { kind: 'ctx', text: 'third-hunk', oldLine: 20, newLine: 20 },
+]
+
+function multiHunkState(overrides = {}) {
+  return diffState({
+    data: diffFixture({
+      worktree: { rows: MULTI_HUNK_ROWS, additions: 0, deletions: 0, hunks: 3, binary: false, truncated: false },
+    }),
+    ...overrides,
+  })
+}
+
+test('hunk：可点、带序号、折叠标记按状态翻转', () => {
+  const toggled = []
+  const node = renderPanel(multiHunkState({ collapsed: [1] }), { methods: { toggleHunk: index => toggled.push(index) } })
+
+  const hunks = findAll(node, byClass('dshh-difrow-hunk'))
+  assert.equal(hunks.length, 3, '三个 hunk 头都在（折叠的也留着头）')
+  assert.deepEqual(hunks.map(row => row.props['data-dsh-hud']), ['hunk', 'hunk', 'hunk'])
+  assert.deepEqual(hunks.map(row => row.props['data-hunk-index']), ['0', '1', '2'], '序号是渲染顺序，不是行号')
+
+  const marks = findAll(node, byClass('dshh-hunkMark')).map(mark => textOf(mark))
+  assert.deepEqual(marks, ['▾', '▸', '▾'], '折叠的那个是 ▸')
+
+  // 点 hunk 头 = 折叠 / 展开它。
+  hunks[2].props.onClick()
+  assert.deepEqual(toggled, [2])
+})
+
+test('hunk：折叠只收起那一段，文件头与别的 hunk 照常显示', () => {
+  const open = textOf(renderPanel(multiHunkState()))
+  assert.ok(open.includes('first-hunk') && open.includes('second-hunk') && open.includes('third-hunk'))
+
+  const folded = textOf(renderPanel(multiHunkState({ collapsed: [1] })))
+  assert.ok(folded.includes('first-hunk'), '别的 hunk 的内容还在')
+  assert.ok(folded.includes('third-hunk'))
+  assert.ok(!folded.includes('second-hunk'), '被折叠那段的正文不渲染')
+  assert.ok(folded.includes('diff --git a/a.ts b/a.ts'), 'hunk 之前的文件头永远显示')
+  assert.ok(folded.includes('@@ -10,1 +10,1 @@'), '折叠的头本身还在（要能点回来）')
+})
+
+test('hunk：当前 hunk 高亮，且不是折叠中的那个', () => {
+  const active = renderPanel(multiHunkState({ hunk: 2 }))
+  const activeRows = findAll(active, byClass('dshh-difrow-hunkActive'))
+  assert.equal(activeRows.length, 1, '只有一个当前 hunk')
+  assert.equal(activeRows[0].props['data-hunk-index'], '2')
+
+  // 当前 hunk 正好被折叠时不标"当前"（不然用户看不到内容却看到高亮）。
+  const foldedActive = renderPanel(multiHunkState({ hunk: 1, collapsed: [1] }))
+  assert.equal(findAll(foldedActive, byClass('dshh-difrow-hunkActive')).length, 0)
+})
+
+test('清单：键盘选中用描边，正在看的差异用底色，两者可以同时在不同行上', () => {
+  const node = renderPanel({ ...multiHunkState(), cursor: 'new file.txt' })
+  const rows = findAll(node, byClass('dshh-row'))
+  assert.deepEqual(rows.map(row => row.props['data-row-index']), ['0', '1'], '行带序号（键盘把它滚回视野要用）')
+
+  const active = findAll(node, byClass('dshh-rowActive'))
+  const cursor = findAll(node, byClass('dshh-rowCursor'))
+  assert.equal(active.length, 1, '正在看的是 src/a.ts')
+  assert.ok(active[0].props.title.startsWith('src/a.ts'))
+  assert.equal(cursor.length, 1, '键盘选中的是另一行')
+  assert.ok(cursor[0].props.title.startsWith('new file.txt'))
+  assert.notEqual(active[0], cursor[0])
+})
+
+/* ------------------------------------------------- 键盘移动（真实 store） */
+
+/** 三个 hunk 的 diff 响应。 */
+function multiHunkDiffValue() {
+  return {
+    repo: '/x',
+    path: 'src/a.ts',
+    origPath: null,
+    untracked: false,
+    worktree: { rows: MULTI_HUNK_ROWS, additions: 0, deletions: 0, hunks: 3, binary: false, truncated: false },
+    index: { rows: [], additions: 0, deletions: 0, hunks: 0, binary: false, truncated: false },
+  }
+}
+
+test('键盘移动（store）：↑/↓ 在工作区清单里走，到底就停住', async () => {
+  const calls = []
+  const store = realStore({
+    rpc: (channel, endpoint, envelope) => {
+      calls.push({ endpoint, args: envelope.args })
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'diff') return Promise.resolve({ ok: true, value: multiHunkDiffValue() })
+      return Promise.resolve({ ok: true, value: COMMIT_DIFF_VALUE })
+    },
+  })
+  store.bindSession('session-1', '/x')
+  await store.refresh()
+
+  // 还没选过：向下落在第一条，向上落在最后一条。
+  assert.equal(store.stepFile(1, false).file, 'src/a.ts')
+  assert.equal(store.getSnapshot().cursor, 'src/a.ts')
+  assert.equal(store.stepFile(1, false).file, 'new file.txt')
+  assert.equal(store.stepFile(1, false).file, 'new file.txt', '到底了就停住，不绕回')
+  assert.equal(store.stepFile(-1, false).file, 'src/a.ts')
+  assert.equal(store.getSnapshot().diff, null, '只移动不打开')
+  assert.equal(store.stepFile(-1, false).file, 'src/a.ts', '到顶了也停住')
+
+  assert.equal(store.stepFile(1, true).file, 'new file.txt', '移动并打开')
+  await flush()
+  assert.equal(store.getSnapshot().diff.file, 'new file.txt')
+  assert.deepEqual(calls.filter(call => call.endpoint === 'diff').map(call => call.args.path), ['new file.txt'])
+})
+
+test('键盘移动（store）：还没选过时 ↑ 落在最后一条', async () => {
+  const store = realStore({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      return Promise.resolve({ ok: true, value: multiHunkDiffValue() })
+    },
+  })
+  store.bindSession('session-1', '/x')
+  await store.refresh()
+
+  assert.equal(store.stepFile(-1, false).file, 'new file.txt', '↑ 先落在最后一条，用户不必先点一行')
+})
+
+test('键盘移动（store）：清单跟着视图走——提交页里返回的是这次提交的文件', async () => {
+  const calls = []
+  const store = realStore({
+    rpc: (channel, endpoint, envelope) => {
+      calls.push({ endpoint, args: envelope.args })
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'commit') return Promise.resolve({ ok: true, value: COMMIT_VALUE })
+      if (endpoint === 'commit-diff') return Promise.resolve({ ok: true, value: COMMIT_DIFF_VALUE })
+      return Promise.resolve({ ok: true, value: multiHunkDiffValue() })
+    },
+  })
+  store.bindSession('session-1', '/x')
+  await store.openCommit({ sha: 'sha-1', subject: 'feat: 有改动' })
+
+  assert.equal(store.getSnapshot().cursor, 'src/a.ts', '打开提交时顺手选中了第一个文件')
+  const next = store.stepFile(1, true)
+  assert.equal(next.file, 'b.txt')
+  await flush()
+  assert.equal(store.getSnapshot().diff.file, 'b.txt')
+  assert.equal(calls.filter(call => call.endpoint === 'diff').length, 0, '提交视图里不该去问工作区差异')
+  assert.deepEqual(calls.filter(call => call.endpoint === 'commit-diff').map(call => call.args.path), ['src/a.ts', 'b.txt'])
+})
+
+test('键盘移动（store）：Enter 打开选中的那条，还没选过就打开第一条', async () => {
+  const calls = []
+  const store = realStore({
+    rpc: (channel, endpoint, envelope) => {
+      calls.push({ endpoint, args: envelope.args })
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      return Promise.resolve({ ok: true, value: multiHunkDiffValue() })
+    },
+  })
+  store.bindSession('session-1', '/x')
+  await store.refresh()
+
+  store.openCursor()
+  await flush()
+  assert.equal(store.getSnapshot().diff.file, 'src/a.ts', '没选过就打开第一条')
+  assert.equal(store.getSnapshot().cursor, 'src/a.ts')
+
+  store.stepFile(1, false)
+  assert.equal(store.getSnapshot().cursor, 'new file.txt', '↑/↓ 先把选中的那行挪过去')
+  store.openCursor()
+  await flush()
+  assert.equal(store.getSnapshot().diff.file, 'new file.txt')
+  assert.deepEqual(calls.filter(call => call.endpoint === 'diff').map(call => call.args.path), ['src/a.ts', 'new file.txt'])
+})
+
+test('hunk 移动（store）：n/p 在 hunk 之间走，跳到折叠的那个会展开它', async () => {
+  const store = realStore({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      return Promise.resolve({ ok: true, value: multiHunkDiffValue() })
+    },
+  })
+  store.bindSession('session-1', '/x')
+  await store.openDiff({ file: 'src/a.ts', path: 'src/a.ts' })
+
+  assert.equal(store.getSnapshot().diff.hunk, 0, '刚打开时落在第一个 hunk')
+  assert.deepEqual(store.getSnapshot().diff.collapsed, [])
+
+  store.stepHunk(1)
+  assert.equal(store.getSnapshot().diff.hunk, 1)
+  store.stepHunk(1)
+  assert.equal(store.getSnapshot().diff.hunk, 2)
+  store.stepHunk(1)
+  assert.equal(store.getSnapshot().diff.hunk, 2, '到最后一个就停住')
+  store.stepHunk(-1)
+  store.stepHunk(-1)
+  store.stepHunk(-1)
+  assert.equal(store.getSnapshot().diff.hunk, 0, '到第一个也停住')
+
+  store.toggleHunk(1)
+  assert.deepEqual(store.getSnapshot().diff.collapsed, [1])
+  assert.equal(store.getSnapshot().diff.hunk, 1, '折叠某个 hunk 也把它变成当前 hunk')
+  store.stepHunk(-1)
+  store.stepHunk(1)
+  assert.deepEqual(store.getSnapshot().diff.collapsed, [], '跳回折叠中的 hunk 要展开它，否则按键像没反应')
+
+  store.toggleHunk(1)
+  store.toggleHunk(1)
+  assert.deepEqual(store.getSnapshot().diff.collapsed, [], '再点一次就展开')
+})
+
+test('hunk 移动（store）：换文件、换侧都会重置当前 hunk 与折叠', async () => {
+  const store = realStore({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      return Promise.resolve({ ok: true, value: multiHunkDiffValue() })
+    },
+  })
+  store.bindSession('session-1', '/x')
+  await store.openDiff({ file: 'src/a.ts', path: 'src/a.ts' })
+  store.stepHunk(2)
+  store.toggleHunk(1)
+  assert.equal(store.getSnapshot().diff.hunk, 1)
+
+  store.setDiffSide('index')
+  assert.equal(store.getSnapshot().diff.hunk, 0, '换侧等于换了一份 rows')
+  assert.deepEqual(store.getSnapshot().diff.collapsed, [])
+
+  store.setDiffSide('worktree')
+  store.stepHunk(2)
+  await store.openDiff({ file: 'new file.txt', path: 'new file.txt' })
+  assert.equal(store.getSnapshot().diff.hunk, 0, '换文件也回到第一个 hunk')
+  assert.deepEqual(store.getSnapshot().diff.collapsed, [])
+
+  // 没有差异 / 没有 hunk 时按键就是 no-op，不抛错。
+  store.closeDiff()
+  store.stepHunk(1)
+  store.toggleHunk(0)
+  assert.equal(store.getSnapshot().diff, null)
+})
+
 /* -------------------------------------------------- 两栏工作台（diff 模式） */
 
 test('工作台：左栏常驻改动清单，右栏是差异，打开差异不换掉清单', () => {
@@ -1264,6 +1520,126 @@ test('工作台：拖动右边缘改差异宽度，松手才落盘', () => {
   up({ pointerId: 9 })
   assert.equal(calls.persist, 1, '松手落盘')
   assert.equal(bundle.listeners.get('pointermove')?.length ?? 0, 0, '松手解除监听')
+})
+
+/* ------------------------------------------------------- 键盘（面板激活后） */
+
+/** 造一个"事件目标"节点：`panelMark` 为 'panel' 表示落在面板里。 */
+function fakeNode(panelMark = null, extra = {}) {
+  return {
+    getAttribute: name => (name === 'data-dsh-hud' ? panelMark : null),
+    parentNode: null,
+    ...extra,
+  }
+}
+
+/** 让 store 里那串 promise 链跑完（键盘动作本身是 fire-and-forget，返回的是条目不是 promise）。 */
+function flush() {
+  return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+/** 造一个 keydown 事件（带 preventDefault / stopPropagation 的探针）。 */
+function keyEvent(key, extra = {}) {
+  return {
+    key,
+    target: fakeNode('panel'),
+    preventDefault() { this.prevented = true },
+    stopPropagation() { this.stopped = true },
+    ...extra,
+  }
+}
+
+/** 挂载面板，并在面板里按一下指针把它激活。 */
+function mountArmedPanel(state = {}, options = {}) {
+  const mounted = mountPanel(state, options)
+  mounted.arm()
+  return mounted
+}
+
+test('键盘：没在面板里点过就不接管按键（打字、翻菜单、滚会话都不受影响）', () => {
+  const { bundle, calls } = mountPanel({ diff: diffState().diff })
+  const keydown = bundle.listeners.get('keydown')?.[0]?.listener
+
+  const event = keyEvent('ArrowDown', { target: fakeNode() })
+  keydown(event)
+  assert.deepEqual(calls.stepFile, [], '没激活就一个键都不该动')
+  assert.equal(event.prevented, undefined)
+
+  // 但 Esc 例外：老行为是"焦点在输入框里也收得到"。
+  keydown(keyEvent('Escape', { target: fakeNode() }))
+  assert.equal(calls.closeDiff, 1)
+})
+
+test('键盘：在面板里点过之后 ↑/↓ 选行、Enter 打开、[/] 移动并打开', () => {
+  const { bundle, calls } = mountArmedPanel({ diff: diffState().diff })
+  const keydown = bundle.listeners.get('keydown')?.[0]?.listener
+  const press = (key, extra = {}) => {
+    const event = keyEvent(key, extra)
+    keydown(event)
+    return event
+  }
+
+  assert.equal(press('ArrowDown').prevented, true, '认领的键要阻止默认滚动')
+  assert.equal(press('ArrowUp').stopped, true, '也不该再让产品处理一遍')
+  assert.deepEqual(calls.stepFile, [[1, false], [-1, false]], '↑/↓ 只移动，不打开')
+
+  press('Enter')
+  assert.equal(calls.openCursor, 1, 'Enter 打开选中的那条')
+
+  press(']')
+  press('[')
+  assert.deepEqual(calls.stepFile.slice(2), [[1, true], [-1, true]], '[/] 移动并直接打开')
+
+  press('n')
+  press('p')
+  assert.deepEqual(calls.stepHunk, [1, -1], 'n/p 跳 hunk')
+
+  press('r')
+  assert.equal(calls.refresh, 1, 'r 刷新')
+
+  // 认不出的键不接管。
+  const other = press('x')
+  assert.equal(other.prevented, undefined)
+})
+
+test('键盘：Space 折叠当前 hunk；带修饰键与输入中的按键都不碰', () => {
+  const { bundle, calls } = mountArmedPanel({ diff: diffState({ hunk: 2 }).diff })
+  const keydown = bundle.listeners.get('keydown')?.[0]?.listener
+
+  keydown(keyEvent(' '))
+  assert.deepEqual(calls.toggleHunk, [2], 'Space 作用于当前 hunk')
+
+  // contenteditable（产品的输入框）里打字：一个字都不能吞。
+  const typing = keyEvent(' ', { target: fakeNode(null, { tagName: 'DIV', isContentEditable: true }) })
+  keydown(typing)
+  assert.deepEqual(calls.toggleHunk, [2], '输入时不再接管')
+  assert.equal(typing.prevented, undefined)
+
+  // 带修饰键的组合交给产品与浏览器。
+  keydown(keyEvent('n', { metaKey: true }))
+  keydown(keyEvent('n', { ctrlKey: true }))
+  keydown(keyEvent('n', { altKey: true }))
+  assert.deepEqual(calls.stepHunk, [], 'Cmd/Ctrl/Alt 组合不接管')
+})
+
+test('键盘：Tab 进面板也算激活（activeElement 在面板里）', () => {
+  const { bundle, calls } = mountPanel({ diff: diffState().diff })
+  const keydown = bundle.listeners.get('keydown')[0].listener
+
+  bundle.documentStub.activeElement = fakeNode('panel')
+  keydown(keyEvent('n'))
+  assert.deepEqual(calls.stepHunk, [1], '不用先点一下也能用键盘')
+
+  // 点到面板外面就把按键交还（下一次 pointerdown 会重置这个标记）。
+  bundle.documentStub.activeElement = null
+  bundle.listeners.get('pointerdown')[0].listener({ target: fakeNode() })
+  keydown(keyEvent('n'))
+  assert.deepEqual(calls.stepHunk, [1], '在别处点过之后不再接管')
+})
+
+test('键盘：面板收起时连指针监听都不注册', () => {
+  const { bundle } = mountPanel({ panelOpen: false })
+  assert.equal(bundle.listeners.has('pointerdown'), false)
 })
 
 test('工作台：Esc 是"退一层"——先关差异，再按才收起面板', () => {
