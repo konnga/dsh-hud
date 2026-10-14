@@ -22,14 +22,19 @@
 
   - 悬停胶囊会给出完整信息：工作区绝对路径、上游分支、各类型的中文计数。
   - 点击开关面板。
-- **悬浮面板**（默认停在输入框上方居中）：
+- **悬浮面板**（紧贴胶囊上方居中，位置是**实测**的，见下文"面板为什么贴着胶囊"）：
   - 标题栏：分支/DETACHED 标记，`⟳` 刷新、`⌖` 复位位置、`✕` 收起；**拖动标题栏可移动面板**，**双击标题栏复位**。
   - 仓库路径、上游分支、领先/落后、短 oid。
   - 改动概览：按类型分组的彩色计数（已修改 / 已暂存新增 / 已删除 / 重命名 / 复制 / 类型改变 / 未跟踪 / 冲突），**只显示非零项**；没有改动时显示"工作区干净"。
-  - 改动清单：每行一个 porcelain-v2 状态字母 + 路径，重命名读作 `旧 → 新`。
+  - 改动清单：每行一个 porcelain-v2 状态字母 + 路径，重命名读作 `旧 → 新`。**点击任意一行打开该文件的差异视图。**
   - 底栏：`只读` 与最近一次成功读取的时间。
+- **差异视图**（在面板内，点击改动行进入）：
+  - 工具栏：`← 返回清单`、文件路径、`+新增 -删除` 计数、`未暂存` / `已暂存` 页签、`自动换行`、`复制差异`。
+  - 逐行渲染 unified diff：**旧/新两个行号槽**（`user-select:none`，方便拖选代码），新增行绿底、删除行红底、hunk 头加深、`diff --git` 等文件头压暗。
+  - 两侧**一次取回**，切换页签不再发请求；未跟踪文件隐藏"已暂存"页签并说明它是与空文件对比。
+  - 差异模式下面板更宽（最多 920px）且**高度固定**——面板以 `bottom` 锚定，若只给 `max-height`，内容变高时整块会跳位。
 
-面板的展开状态与拖动位置记在浏览器 `localStorage`（键 `dsh-hud.ui.v1`），刷新后保持。
+面板的展开状态、拖动位置与"自动换行"开关记在浏览器 `localStorage`（键 `dsh-hud.ui.v1`），刷新后保持。
 
 ## 架构
 
@@ -52,6 +57,12 @@
 - **面板**坐在 root 作用域的 `shell.overlay`，只读共享 store 的 `sessionId` / `cwd`。
 
 右栏里的嵌入式会话（子会话 chat）自带会话绑定，胶囊用快照的 `retainedBy.mainView` 排除它们，避免一个子会话把面板下面的仓库抽走；快照不带这个计数（更旧的宿主）时按主视图放行，胶囊不会因此消失。
+
+### 面板为什么贴着胶囊
+
+`bottom: 168px` 是 dsh-git 记录的一次测量（"输入框堆叠高度"），而 DSH 在空白会话（hero）里会把输入框垂直居中，不同版本的底部状态栏高度也不同——写死就会在 hero 状态下面板飘在输入框上方很远的地方。
+
+本插件改成**实测**：面板打开时（以及每次会话/状态变化、窗口 resize）量一次自己胶囊所在 dock 行的位置，把面板贴到它上方 8px。用**自己的** `data-dsh-hud="dock"` 标记取节点，不碰产品的 DOM 选择器；量不到就退回 168px 这个常量。
 
 ## 安装
 
@@ -88,16 +99,21 @@ dsh plugin --profile desktop remove dsh-hud
 | 端点 | 参数 | 结果（`value`） |
 | --- | --- | --- |
 | `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, counts: { modified, added, deleted, renamed, copied, typeChanged, untracked, conflicted }, changes: [{ status, index, worktree, path, file, origFile }], truncated }`。`cwd` 必须是绝对路径；不是仓库时 `repo` 为 `null`（这是成功结果，不是错误）。`path` 是展示串（重命名读作 `旧 → 新`），`file`/`origFile` 是原始路径，`index`/`worktree` 是 porcelain-v2 的两个字母。 |
+| `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, worktree, index }`，两侧各自是 `{ rows: [{ kind: "add"\|"del"\|"ctx"\|"hunk"\|"meta", text, oldLine, newLine }], additions, deletions, hunks, binary, truncated }`。`path` 必须是**仓库内相对路径**（拒绝绝对路径、`..`、前导 `-`、控制字符）。未跟踪文件与空文件对比并把 `untracked` 置真；二进制只置 `binary`；文本按行截断（单侧 200k 字符 / 2000 行）。**解析在宿主侧完成**，浏览器半只负责渲染。 |
 
-`details.code` 取值：`invalid-cwd`、`no-cwd`、`git-missing`、`git-failed`、`timeout`、`unknown-endpoint`。
+`details.code` 取值：`invalid-cwd`、`invalid-path`、`no-cwd`、`git-missing`、`git-failed`、`timeout`、`unknown-endpoint`。
 
 ## 数据来源与边界
 
-数据来自两条只读命令：
+数据来自这些只读命令（`diff` 只在你点击某个文件时才跑）：
 
 ```bash
 git rev-parse --show-toplevel
 git status --porcelain=v2 --branch -z --untracked-files=normal
+git ls-files --error-unmatch -- <path>                            # 是否未跟踪
+git diff --no-color --no-ext-diff -- <path> [<origPath>]          # 工作区侧
+git diff --cached --no-color --no-ext-diff -- <path> [<origPath>] # 已暂存侧
+git diff --no-index --no-color --no-ext-diff -- /dev/null <path>  # 未跟踪文件
 ```
 
 - **只读**：不执行 `add`/`commit`/`checkout`/`fetch` 等任何写操作，不碰 index、工作区或 git 配置，不读取文件内容，不显示凭证。想改东西请用编辑器或终端（也可以配 `dsh-git` 那类带写操作的插件）。
@@ -109,9 +125,10 @@ git status --porcelain=v2 --branch -z --untracked-files=normal
 
 - **胶囊不可省**：面板本身读不到当前会话，见上文"为什么面板要靠胶囊喂数据"。若把胶囊座位去掉，面板会停在最后一次绑定的目录上。
 - **胶囊的横向位置依赖框架的 CSS 变量**：`conversation.input.dock` 给的是整栏宽的一行，而输入卡片自身有最大宽度并居中。胶囊的外层容器复刻了框架自带 dock 占位元素（队列公告）的几何——`--dsh-composer-card-max-width`、`--dsh-composer-side-clearance`、`--dsh-composer-dock-inset`——这样才会与输入卡片左边缘对齐。这些变量名若在新版 dsh 里改动，胶囊会退回"贴着整栏最左边"（功能不受影响，只是位置不好看）。
-- 面板默认锚点 `bottom: 168px` 是**对输入框堆叠高度的一次测量**（输入框卡片 + 工具行 + dock 行），不是公开契约。输入框变高变矮时需要重新测量 `lib/client.js` 里的 `COMPOSER_OFFSET`。
+- 面板锚点优先用**实测**的 dock 行位置（见「面板为什么贴着胶囊」），`COMPOSER_OFFSET = 168` 只是量不到时的兜底；那个数字来自 dsh-git 记录的「输入框堆叠高度」，不是公开契约。
+- 面板表面色用主题的**抬升面令牌** `--dsw-alias-bg-layer-1`、阴影用 `--dsw-shadow-lv2`。`--dsw-alias-bg-overlay` 在暗色下是 `neutral-bluish-700`（中灰），拿它当浮层底色会明显比产品本身「发灰」；差异行的增删底色是半透明 rgba（压在表面色之上，亮暗主题都可读），行号与 hunk 头走主题令牌。
 - 拖动过位置后，视图尺寸变化只会把面板**夹回**可视区域内；想回到默认锚点用 `⌖` 或双击标题栏。
-- 只显示改动清单，不含单文件 diff。
+- 差异视图是**只读**的线条级着色（新增 / 删除 / 上下文 / hunk / 文件头），不含词级高亮与语法着色；不提供暂存、提交等任何写操作。
 - 需要 `dsh >= 0.1.5-rc.1`（`connection.requestRejection` 可用），且插件只在 Web GUI（`platform: web`）里有界面。
 
 ## 开发
@@ -127,6 +144,7 @@ node --test test/*.test.mjs   # 或 npm test
 | 文件 | 覆盖 |
 | --- | --- |
 | `test/parse.test.mjs` | porcelain-v2 解析的纯函数用例（含空格路径、重命名原路径、冲突、清单截断） |
+| `test/diff.test.mjs` | diff 解析（行号、hunk 重置、`--`/`++`/`@@` 内容行不误判、二进制、行数上限）、路径校验，以及真实仓库的工作区 / 已暂存 / 未跟踪 / 删除 / 二进制读取 |
 | `test/route.test.mjs` | 线路层：假 ctx/req/res 驱动真实处理器（405 / 401 / 415 / 413 / 404 / 400 / 信封形状 / `details.code`） |
 | `test/status.test.mjs` | 在临时目录里 `git init` 的真实仓库：干净、改动分类、重命名、detached、非仓库、目录不存在 |
 | `test/client.test.mjs` | 浏览器半：假 window/document/React 评估 bundle，验证模块契约、两条座位、共享 store、样式与轮询，并直接渲染胶囊与面板的各种状态 |

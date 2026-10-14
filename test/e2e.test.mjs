@@ -95,3 +95,53 @@ test('两个半边写死的通道前缀完全一致', () => {
   assert.ok(match, '客户端 bundle 必须声明 CHANNEL 常量')
   assert.equal(match[1], CHANNEL)
 })
+
+test('diff 端点返回两侧已解析的 rows，浏览器半只负责渲染', { skip: !HAS_GIT && 'git 不可用' }, async () => {
+  const dir = await makeRepo()
+  try {
+    await writeFile(path.join(dir, 'a.txt'), 'changed\n')
+
+    const { handler } = mount()
+    const result = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: dir, path: 'a.txt' } })
+
+    assert.equal(result.ok, true, `期望成功，实际 ${JSON.stringify(result)}`)
+    const value = result.value
+    assert.equal(value.path, 'a.txt')
+    assert.equal(value.untracked, false)
+    for (const key of ['rows', 'additions', 'deletions', 'hunks', 'binary', 'truncated']) {
+      assert.ok(key in value.worktree, `工作区侧缺少 ${key}`)
+      assert.ok(key in value.index, `已暂存侧缺少 ${key}`)
+    }
+    for (const row of value.worktree.rows) {
+      for (const key of ['kind', 'text', 'oldLine', 'newLine']) {
+        assert.ok(key in row, `row 缺少 ${key}`)
+      }
+    }
+    assert.equal(value.worktree.additions, 1)
+    assert.equal(value.index.rows.length, 0)
+  }
+  finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('diff 端点拒绝越界路径与非法 cwd，且走信封错误', async () => {
+  const { handler } = mount()
+
+  const escaping = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: '/tmp', path: '../../etc/passwd' } })
+  assert.equal(escaping.ok, false)
+  assert.equal(escaping.error.details.code, 'invalid-path')
+
+  const absolute = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: '/tmp', path: '/etc/passwd' } })
+  assert.equal(absolute.ok, false)
+  assert.equal(absolute.error.details.code, 'invalid-path')
+
+  const dashed = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: '/tmp', path: '--upload-pack=evil' } })
+  assert.equal(dashed.error.details.code, 'invalid-path')
+
+  const badCwd = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: 'relative', path: 'a.txt' } })
+  assert.equal(badCwd.error.details.code, 'invalid-cwd')
+
+  const noPath = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: '/tmp' } })
+  assert.equal(noPath.error.details.code, 'invalid-path')
+})

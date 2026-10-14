@@ -17,6 +17,8 @@ function loadBundle(options = {}) {
   const styles = []
   const listeners = new Map()
   const intervals = []
+  const timeouts = []
+  const clipboardWrites = []
 
   const React = options.ReactImpl ?? {
     createElement: (type, props, ...children) => ({ type, props, children }),
@@ -48,12 +50,29 @@ function loadBundle(options = {}) {
     },
     setInterval: (callback, ms) => { intervals.push({ callback, ms }); return intervals.length },
     clearInterval: () => {},
+    setTimeout: (callback, ms) => { timeouts.push({ callback, ms }); return timeouts.length },
+    clearTimeout: () => {},
   }
 
   const documentStub = {
     visibilityState: 'visible',
     createElement: () => ({ textContent: '', attributes: {}, parentNode: null, setAttribute(name, value) { this.attributes[name] = value } }),
     head: { appendChild: (element) => { styles.push(element); element.parentNode = { removeChild() {} } } },
+    // 只认自己的 data-dsh-hud 标记；dockRect 由测试注入，不注入就当量不到。
+    querySelector(selector) {
+      if (selector !== '[data-dsh-hud="dock"]' || !options.dockRect) return null
+      return { getBoundingClientRect: () => options.dockRect }
+    },
+  }
+
+  const navigatorStub = {
+    clipboard: {
+      writeText(text) {
+        if (options.clipboardFails) return Promise.reject(new Error('denied'))
+        clipboardWrites.push(text)
+        return Promise.resolve()
+      },
+    },
   }
 
   const requireModule = (name) => {
@@ -61,15 +80,15 @@ function loadBundle(options = {}) {
     throw new Error(`unexpected module: ${name}`)
   }
 
-  // bundle 主体是脚本：跑在受控的 window/document 下，它只做一次 self-register。
-  new Function('window', 'document', 'require', source)(windowStub, documentStub, requireModule)
+  // bundle 主体是脚本：跑在受控的 window/document/navigator 下，它只做一次 self-register。
+  new Function('window', 'document', 'require', 'navigator', source)(windowStub, documentStub, requireModule, navigatorStub)
 
   /** 触发某个 window 事件名上的全部监听（模拟浏览器派发）。 */
   const dispatch = (name, event) => {
     for (const entry of listeners.get(name) ?? []) entry.listener(event)
   }
 
-  return { registry, styles, listeners, intervals, React, requireModule, windowStub, dispatch }
+  return { registry, styles, listeners, intervals, timeouts, clipboardWrites, React, requireModule, windowStub, documentStub, dispatch }
 }
 
 /** 用假 ctx 调 apply，捕获座位的注册与副作用标签。 */
@@ -158,6 +177,11 @@ function fakeStore(state) {
     movePanel: () => {},
     commitPanel: () => {},
     resetPanel: () => {},
+    setAnchorTop: () => {},
+    openDiff: () => {},
+    closeDiff: () => {},
+    setDiffSide: () => {},
+    toggleDiffWrap: () => {},
   }
 }
 
@@ -203,6 +227,8 @@ function renderPill(state = {}, options = {}) {
     cwd: '/Users/me/project',
     panelOpen: false,
     status: statusFixture(),
+    diff: null,
+    anchorTop: null,
   }, state, {
     sessionId: 'session-1',
     useSessions: selector => selector({ byId: { 'session-1': { cwd: '/Users/me/project' } } }),
@@ -217,6 +243,8 @@ function renderPanel(state = {}, options = {}) {
     cwd: '/Users/me/project',
     panelOpen: true,
     status: statusFixture(),
+    diff: null,
+    anchorTop: null,
   }, state, options)
 }
 
@@ -424,7 +452,7 @@ test('面板：非仓库、未绑定、读取中与失败各有文案', () => {
 })
 
 test('面板：宿主半的失败码翻译成本地化文案', () => {
-  for (const [code, key] of [['timeout', 'err.timeout'], ['no-cwd', 'err.no-cwd'], ['git-missing', 'err.git-missing'], ['invalid-cwd', 'err.invalid-cwd'], ['transport', 'err.transport']]) {
+  for (const [code, key] of [['timeout', 'err.timeout'], ['no-cwd', 'err.no-cwd'], ['git-missing', 'err.git-missing'], ['invalid-cwd', 'err.invalid-cwd'], ['invalid-path', 'err.invalid-path'], ['unknown-endpoint', 'err.stale-host'], ['transport', 'err.transport']]) {
     assert.ok(textOf(renderPanel({ phase: 'error', errorCode: code, status: null })).includes(key), `${code} → ${key}`)
   }
   // 认不出的码回退到通用文案，而不是把机器码丢给用户。
@@ -473,7 +501,7 @@ function mountPanel(state = {}, options = {}) {
   const bundle = mountClient({ ReactImpl: mini.React })
   const calls = { openPanel: [], movePanel: [], commitPanel: [], resetPanel: 0 }
   // 快照是可变对象：movePanel 必须更新它，否则「松开时从 store 现读位置」读不到东西。
-  const snapshot = { phase: 'ready', sessionId: 'session-1', cwd: '/Users/me/project', panelOpen: true, status: statusFixture(), ...state }
+  const snapshot = { phase: 'ready', sessionId: 'session-1', cwd: '/Users/me/project', panelOpen: true, status: statusFixture(), diff: null, anchorTop: null, ...state }
   const store = {
     ...fakeStore(snapshot),
     openPanel: value => { calls.openPanel.push(value) },
@@ -564,4 +592,213 @@ test('交互：面板收起时不注册任何面板级监听', () => {
   const { bundle } = mountPanel({ panelOpen: false })
   assert.equal(bundle.listeners.has('keydown'), false)
   assert.equal(bundle.listeners.has('pointermove'), false)
+})
+
+/* ---------------------------------------------------- 差异视图（diff） */
+
+/** 按谓词收集节点（会展开函数组件，因此子组件也参与断言）。 */
+function findAll(node, predicate, depth = 0, out = []) {
+  if (depth > 20 || node === null || typeof node !== 'object') return out
+  // 数组也可能作为"单个子节点"传进来（例如把 rows 数组直接交给 div）。
+  if (Array.isArray(node)) {
+    for (const child of node) findAll(child, predicate, depth + 1, out)
+    return out
+  }
+  if (typeof node.type === 'function') return findAll(node.type({ ...node.props, children: node.children }), predicate, depth + 1, out)
+  if (predicate(node)) out.push(node)
+  for (const child of node.children || []) findAll(child, predicate, depth + 1, out)
+  return out
+}
+
+const byClass = className => node => typeof node.props?.className === 'string' && node.props.className.split(' ').includes(className)
+const byText = text => node => node.children?.length === 1 && node.children[0] === text
+
+/** 一个改动文件的两侧 diff（宿主半已解析成 rows）。 */
+function diffFixture(overrides = {}) {
+  const rows = [
+    { kind: 'meta', text: 'diff --git a/a.ts b/a.ts', oldLine: null, newLine: null },
+    { kind: 'hunk', text: '@@ -1,2 +1,3 @@', oldLine: null, newLine: null },
+    { kind: 'ctx', text: 'keep', oldLine: 1, newLine: 1 },
+    { kind: 'del', text: 'old', oldLine: 2, newLine: null },
+    { kind: 'add', text: 'new', oldLine: null, newLine: 2 },
+    { kind: 'add', text: 'more', oldLine: null, newLine: 3 },
+  ]
+  return {
+    repo: '/Users/me/project',
+    path: 'a.ts',
+    origPath: null,
+    untracked: false,
+    worktree: { rows, additions: 2, deletions: 1, hunks: 1, binary: false, truncated: false },
+    index: { rows: [], additions: 0, deletions: 0, hunks: 0, binary: false, truncated: false },
+    ...overrides,
+  }
+}
+
+function diffState(overrides = {}) {
+  return {
+    diff: {
+      phase: 'ready',
+      path: 'a.ts',
+      file: 'a.ts',
+      origPath: null,
+      data: diffFixture(),
+      side: 'worktree',
+      wrap: false,
+      errorCode: null,
+      ...overrides,
+    },
+  }
+}
+
+test('清单：点击一行以该改动打开差异', () => {
+  const opened = []
+  const node = renderPanel({}, { methods: { openDiff: change => opened.push(change) } })
+  const rows = findAll(node, byClass('dshh-row'))
+  assert.equal(rows.length, 2, '两个改动各一行')
+  rows[0].props.onClick()
+  assert.equal(opened.length, 1)
+  assert.equal(opened[0].file, 'src/a.ts')
+  assert.equal(opened[0].path, 'src/a.ts')
+})
+
+test('差异视图：行号、文本与增删底色', () => {
+  const node = renderPanel(diffState())
+
+  const text = textOf(node)
+  assert.ok(text.includes('diff.back'), '有返回按钮')
+  assert.ok(text.includes('+2') && text.includes('-1'), '显示增删计数')
+  assert.ok(text.includes('keep') && text.includes('new') && text.includes('more'))
+  assert.ok(!text.includes('panel.summary'), '差异模式下不再显示改动概览')
+
+  // 两个行号槽：上下文行两侧都有行号，删除行只有旧行号，新增行只有新行号。
+  const ctx = findAll(node, byClass('dshh-difrow')).find(row => row.props.className.includes('dshh-difrow-ctx'))
+  const gutters = ctx.children.filter(child => child.props && child.props.className === 'dshh-difno')
+  assert.deepEqual(gutters.map(gutter => gutter.children[0]), ['1', '1'])
+
+  const del = findAll(node, byClass('dshh-difrow')).find(row => row.props.className.includes('dshh-difrow-del'))
+  assert.deepEqual(del.children.filter(c => c.props?.className === 'dshh-difno').map(g => g.children[0]), ['2', ''])
+  assert.ok(del.props.style.background.includes('rgba'), '删除行有底色')
+
+  const add = findAll(node, byClass('dshh-difrow')).find(row => row.props.className.includes('dshh-difrow-add'))
+  assert.ok(add.props.style.background.includes('rgba'), '新增行有底色')
+
+  // 空文本行用不换行空格占位，否则行高会塌掉。
+  const metaRows = findAll(node, byClass('dshh-difrow-meta'))
+  assert.ok(metaRows.length >= 1)
+})
+
+test('差异视图：页签、自动换行、返回都走 store', () => {
+  const calls = { side: [], wrap: 0, close: 0 }
+  const node = renderPanel(diffState(), {
+    methods: { setDiffSide: side => calls.side.push(side), toggleDiffWrap: () => { calls.wrap += 1 }, closeDiff: () => { calls.close += 1 } },
+  })
+
+  findAll(node, byText('diff.index'))[0].props.onClick()
+  findAll(node, byText('diff.worktree'))[0].props.onClick()
+  assert.deepEqual(calls.side, ['index', 'worktree'])
+
+  findAll(node, byText('diff.wrap'))[0].props.onClick()
+  assert.equal(calls.wrap, 1)
+
+  findAll(node, node2 => typeof node2.children?.[0] === 'string' && node2.children[0].startsWith('←'))[0].props.onClick()
+  assert.equal(calls.close, 1)
+})
+
+test('差异视图：复制的是重建后的 unified diff 文本', async () => {
+  const { bundle } = (() => {
+    const mini = createMiniReact()
+    return { bundle: mountClient({ ReactImpl: mini.React }) }
+  })()
+  const tree = (() => {
+    const node = renderPanel(diffState())
+    return findAll(node, byText('diff.copy'))[0]
+  })()
+
+  // 用带真实 hooks 的挂载来跑点击后的状态更新与剪贴板写入。
+  const mini = createMiniReact()
+  const harness = mountClient({ ReactImpl: mini.React })
+  const store = { ...fakeStore({ ...diffState(), panelOpen: true }), toggleDiffWrap: () => {} }
+  const mounted = mini.mount(harness.components['dsh-hud-panel'], { t: T, store })
+  const copyButton = findAll(mounted, byText('diff.copy'))[0]
+  copyButton.props.onClick()
+  await new Promise(resolve => setImmediate(resolve))
+
+  assert.equal(harness.clipboardWrites.length, 1)
+  assert.equal(harness.clipboardWrites[0], [
+    'diff --git a/a.ts b/a.ts',
+    '@@ -1,2 +1,3 @@',
+    ' keep',
+    '-old',
+    '+new',
+    '+more',
+  ].join('\n'))
+  assert.ok(tree, '静态渲染下也应能找到复制按钮')
+  assert.ok(bundle)
+})
+
+test('差异视图：未跟踪文件隐藏已暂存页签并给出说明', () => {
+  const node = renderPanel(diffState({ data: diffFixture({ untracked: true }), side: 'worktree' }))
+  assert.equal(findAll(node, byText('diff.index')).length, 0, '未跟踪没有已暂存一侧')
+  assert.ok(textOf(node).includes('diff.untrackedHint'))
+})
+
+test('差异视图：二进制、空、错误、读取中各有文案', () => {
+  const binary = renderPanel(diffState({ data: diffFixture({ worktree: { rows: [{ kind: 'meta', text: 'Binary files differ', oldLine: null, newLine: null }], additions: 0, deletions: 0, hunks: 0, binary: true, truncated: false } }) }))
+  assert.ok(textOf(binary).includes('diff.binary'))
+
+  const empty = renderPanel(diffState({ data: diffFixture({ worktree: { rows: [], additions: 0, deletions: 0, hunks: 0, binary: false, truncated: false } }) }))
+  assert.ok(textOf(empty).includes('diff.empty'))
+
+  const loading = renderPanel(diffState({ phase: 'loading', data: null }))
+  assert.ok(textOf(loading).includes('panel.loading'))
+
+  const failed = renderPanel(diffState({ phase: 'error', data: null, errorCode: 'timeout' }))
+  assert.ok(textOf(failed).includes('err.timeout'))
+})
+
+test('差异视图：截断时给出提示', () => {
+  const node = renderPanel(diffState({ data: diffFixture({ worktree: { ...diffFixture().worktree, truncated: true } }) }))
+  assert.ok(textOf(node).includes('diff.truncated'))
+})
+
+/* -------------------------------------------------------- 定位与尺寸 */
+
+test('面板：量到胶囊位置就贴到它上方，量不到退回 168px', () => {
+  const anchored = renderPanel({ anchorTop: 500 })
+  assert.equal(anchored.props.style.bottom, 800 - 500 + 8, 'bottom = 视口高 - dock 顶部 + 间距')
+
+  const fallback = renderPanel({ anchorTop: null })
+  assert.equal(fallback.props.style.bottom, 168, 'dsh-git 记录的那次测量作为兜底')
+})
+
+test('面板：打开时测量自己的 dock 行并写进 store', () => {
+  const mini = createMiniReact()
+  const bundle = mountClient({ ReactImpl: mini.React, dockRect: { top: 420 } })
+  const seen = []
+  const store = { ...fakeStore({ ...diffState().diff === null ? {} : {}, phase: 'ready', sessionId: 's', cwd: '/x', panelOpen: true, status: statusFixture(), diff: null, anchorTop: null }), setAnchorTop: top => seen.push(top) }
+  mini.mount(bundle.components['dsh-hud-panel'], { t: T, store })
+  assert.deepEqual(seen, [420], '应把量到的顶部坐标交给 store')
+})
+
+test('面板：量不到 dock 行时写 null，退回常量锚点', () => {
+  const mini = createMiniReact()
+  const bundle = mountClient({ ReactImpl: mini.React })
+  const seen = []
+  const store = { ...fakeStore({ phase: 'ready', sessionId: 's', cwd: '/x', panelOpen: true, status: statusFixture(), diff: null, anchorTop: null }), setAnchorTop: top => seen.push(top) }
+  mini.mount(bundle.components['dsh-hud-panel'], { t: T, store })
+  assert.deepEqual(seen, [null])
+})
+
+test('面板：差异模式更宽、且用固定高度（避免 bottom 锚定下跳位）', () => {
+  const list = renderPanel({ anchorTop: null })
+  assert.equal(list.props.style.width, 380)
+  assert.equal(list.props.style.height, undefined, '清单模式跟着内容')
+  assert.equal(list.props.style.maxHeight, '62vh')
+
+  const diff = renderPanel({ ...diffState(), anchorTop: null })
+  assert.ok(diff.props.style.width > 380, '差异模式更宽')
+  assert.equal(typeof diff.props.style.height, 'number', '差异模式固定高度')
+  const spaceAbove = 800 - 168 - 8
+  assert.ok(diff.props.style.height <= spaceAbove, '高度不超过胶囊上方的可用空间')
+  assert.equal(diff.props.style.maxHeight, undefined, '固定高度就不该再给 max-height')
 })
