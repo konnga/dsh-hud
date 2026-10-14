@@ -802,3 +802,48 @@ test('面板：差异模式更宽、且用固定高度（避免 bottom 锚定下
   assert.ok(diff.props.style.height <= spaceAbove, '高度不超过胶囊上方的可用空间')
   assert.equal(diff.props.style.maxHeight, undefined, '固定高度就不该再给 max-height')
 })
+
+/* ------------------------------------------------------------ 最近提交 */
+
+const COMMITS = [
+  { sha: '2eed74e', author: 'wjc', date: '2026-10-14', committedAt: Date.now() - 3600 * 1000, refs: ['HEAD -> main', 'origin/main'], subject: 'feat: 差异视图' },
+  { sha: '1097168', author: 'wjc', date: '2026-10-14', committedAt: Date.now() - 7200 * 1000, refs: [], subject: 'fix: 胶囊与输入卡片左对齐' },
+]
+
+test('最近提交：一行一条，带短 sha、标题、HEAD 徽标与相对时间', () => {
+  const node = renderPanel({ commits: COMMITS })
+  const rows = findAll(node, byClass('dshh-commit'))
+  assert.equal(rows.length, 2)
+
+  const text = textOf(node)
+  assert.ok(text.includes('panel.commits'), '有小标题')
+  assert.ok(text.includes('2eed74e') && text.includes('1097168'), '短 sha')
+  assert.ok(text.includes('feat: 差异视图'), '标题')
+
+  // HEAD 徽标只在 HEAD 那条上出现。
+  assert.equal(findAll(node, byClass('dshh-chead')).length, 1)
+
+  // 相对时间：一小时前 / 两小时前。
+  assert.ok(text.includes('1' + 'time.hours'), `期望「1 小时前」，实际 ${JSON.stringify(text)}`)
+  assert.ok(text.includes('2' + 'time.hours'))
+})
+
+test('最近提交：悬停给出作者、日期与 refs', () => {
+  const node = renderPanel({ commits: COMMITS })
+  const first = findAll(node, byClass('dshh-commit'))[0]
+  const lines = first.props.title.split('\n')
+  assert.equal(lines[0], 'feat: 差异视图')
+  assert.equal(lines[1], 'wjc · 2026-10-14')
+  assert.ok(lines.includes('HEAD -> main') && lines.includes('origin/main'))
+})
+
+test('最近提交：没有提交就整段不渲染', () => {
+  assert.equal(findAll(renderPanel({ commits: [] }), byClass('dshh-commit')).length, 0)
+  assert.equal(findAll(renderPanel({ commits: null }), byClass('dshh-commit')).length, 0)
+  assert.ok(!textOf(renderPanel({ commits: [] })).includes('panel.commits'), '连小标题都不出现')
+})
+
+test('最近提交：超过 30 天回退到提交自己的日期', () => {
+  const old = [{ sha: 'aaaaaaa', author: 'wjc', date: '2025-01-02', committedAt: Date.now() - 400 * 24 * 3600 * 1000, refs: [], subject: '很久以前' }]
+  assert.ok(textOf(renderPanel({ commits: old })).includes('2025-01-02'))
+})

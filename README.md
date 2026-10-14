@@ -26,6 +26,7 @@
   - 标题栏：分支/DETACHED 标记，`⟳` 刷新、`⌖` 复位位置、`✕` 收起；**拖动标题栏可移动面板**，**双击标题栏复位**。
   - 仓库路径、上游分支、领先/落后、短 oid。
   - 改动概览：按类型分组的彩色计数（已修改 / 已暂存新增 / 已删除 / 重命名 / 复制 / 类型改变 / 未跟踪 / 冲突），**只显示非零项**；没有改动时显示"工作区干净"。
+  - **最近提交**：一行一条 `短sha 标题 [HEAD] 相对时间`，悬停给出作者、日期与 refs（本地/远端分支）。只在面板打开时取一次，且只有 HEAD 变了（提交、切分支、拉取）才重取；没有提交时整段不显示。
   - 改动清单：每行一个 porcelain-v2 状态字母 + 路径，重命名读作 `旧 → 新`。**点击任意一行打开该文件的差异视图。**
   - 底栏：`只读` 与最近一次成功读取的时间。
 - **差异视图**（在面板内，点击改动行进入）：
@@ -99,6 +100,7 @@ dsh plugin --profile desktop remove dsh-hud
 | 端点 | 参数 | 结果（`value`） |
 | --- | --- | --- |
 | `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, counts: { modified, added, deleted, renamed, copied, typeChanged, untracked, conflicted }, changes: [{ status, index, worktree, path, file, origFile }], truncated }`。`cwd` 必须是绝对路径；不是仓库时 `repo` 为 `null`（这是成功结果，不是错误）。`path` 是展示串（重命名读作 `旧 → 新`），`file`/`origFile` 是原始路径，`index`/`worktree` 是 porcelain-v2 的两个字母。 |
+| `log` | `{ cwd, count? }` | `{ repo, commits: [{ sha, author, date, committedAt, refs, subject }] }`，最新在前；`count` 钳制在 1..50，默认 10。空仓库（还没有任何提交）返回空列表而不是错误。 |
 | `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, worktree, index }`，两侧各自是 `{ rows: [{ kind: "add"\|"del"\|"ctx"\|"hunk"\|"meta", text, oldLine, newLine }], additions, deletions, hunks, binary, truncated }`。`path` 必须是**仓库内相对路径**（拒绝绝对路径、`..`、前导 `-`、控制字符）。未跟踪文件与空文件对比并把 `untracked` 置真；二进制只置 `binary`；文本按行截断（单侧 200k 字符 / 2000 行）。**解析在宿主侧完成**，浏览器半只负责渲染。 |
 
 `details.code` 取值：`invalid-cwd`、`invalid-path`、`no-cwd`、`git-missing`、`git-failed`、`timeout`、`unknown-endpoint`。
@@ -110,6 +112,7 @@ dsh plugin --profile desktop remove dsh-hud
 ```bash
 git rev-parse --show-toplevel
 git status --porcelain=v2 --branch -z --untracked-files=normal
+git log -n<count> --no-color --date=short --pretty=format:…       # 最近提交（NUL 分隔字段）
 git ls-files --error-unmatch -- <path>                            # 是否未跟踪
 git diff --no-color --no-ext-diff -- <path> [<origPath>]          # 工作区侧
 git diff --cached --no-color --no-ext-diff -- <path> [<origPath>] # 已暂存侧
@@ -144,6 +147,7 @@ node --test test/*.test.mjs   # 或 npm test
 | 文件 | 覆盖 |
 | --- | --- |
 | `test/parse.test.mjs` | porcelain-v2 解析的纯函数用例（含空格路径、重命名原路径、冲突、清单截断） |
+| `test/log.test.mjs` | 最近提交：短 sha、refs、特殊字符标题（NUL 分隔而不是按列切）、条数钳制、空仓库、非仓库 |
 | `test/diff.test.mjs` | diff 解析（行号、hunk 重置、`--`/`++`/`@@` 内容行不误判、二进制、行数上限）、路径校验，以及真实仓库的工作区 / 已暂存 / 未跟踪 / 删除 / 二进制读取 |
 | `test/route.test.mjs` | 线路层：假 ctx/req/res 驱动真实处理器（405 / 401 / 415 / 413 / 404 / 400 / 信封形状 / `details.code`） |
 | `test/status.test.mjs` | 在临时目录里 `git init` 的真实仓库：干净、改动分类、重命名、detached、非仓库、目录不存在 |

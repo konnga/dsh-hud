@@ -145,3 +145,49 @@ test('diff 端点拒绝越界路径与非法 cwd，且走信封错误', async ()
   const noPath = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: '/tmp' } })
   assert.equal(noPath.error.details.code, 'invalid-path')
 })
+
+test('log 端点返回最近提交，且条数被钳制', { skip: !HAS_GIT && 'git 不可用' }, async () => {
+  const dir = await makeRepo()
+  try {
+    // makeRepo 已经提交过一次
+    await writeFile(path.join(dir, 'b.txt'), 'b\n')
+    execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'second'], { cwd: dir, stdio: 'ignore' })
+
+    const { handler } = mount()
+    const result = await rpcCall(handler, CHANNEL, 'log', { args: { cwd: dir, count: 10 } })
+
+    assert.equal(result.ok, true, `期望成功，实际 ${JSON.stringify(result)}`)
+    assert.equal(result.value.commits.length, 2)
+    const [newest] = result.value.commits
+    for (const key of ['sha', 'author', 'date', 'committedAt', 'refs', 'subject']) {
+      assert.ok(key in newest, `提交缺少字段 ${key}`)
+    }
+    assert.equal(newest.subject, 'second')
+    assert.ok(newest.refs.some(ref => ref.startsWith('HEAD')))
+
+    const clamped = await rpcCall(handler, CHANNEL, 'log', { args: { cwd: dir, count: 999 } })
+    assert.ok(clamped.value.commits.length <= 50)
+  }
+  finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('log 端点：非仓库与非法 cwd 的行为', { skip: !HAS_GIT && 'git 不可用' }, async () => {
+  const plain = await mkdtemp(path.join(tmpdir(), 'dsh-hud-e2e-log-'))
+  try {
+    const { handler } = mount()
+    const notRepo = await rpcCall(handler, CHANNEL, 'log', { args: { cwd: plain } })
+    assert.equal(notRepo.ok, true, '非仓库是成功结果')
+    assert.equal(notRepo.value.repo, null)
+    assert.deepEqual(notRepo.value.commits, [])
+
+    const badCwd = await rpcCall(handler, CHANNEL, 'log', { args: { cwd: 'relative' } })
+    assert.equal(badCwd.ok, false)
+    assert.equal(badCwd.error.details.code, 'invalid-cwd')
+  }
+  finally {
+    await rm(plain, { recursive: true, force: true })
+  }
+})
