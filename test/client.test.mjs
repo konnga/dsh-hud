@@ -499,15 +499,18 @@ function findButton(node, label, depth = 0) {
 function mountPanel(state = {}, options = {}) {
   const mini = createMiniReact()
   const bundle = mountClient({ ReactImpl: mini.React })
-  const calls = { openPanel: [], movePanel: [], commitPanel: [], resetPanel: 0 }
+  const calls = { openPanel: [], movePanel: [], commitPanel: [], resetPanel: 0, diffWidth: [], closeDiff: 0, persist: 0 }
   // 快照是可变对象：movePanel 必须更新它，否则「松开时从 store 现读位置」读不到东西。
-  const snapshot = { phase: 'ready', sessionId: 'session-1', cwd: '/Users/me/project', panelOpen: true, status: statusFixture(), diff: null, anchorTop: null, ...state }
+  const snapshot = { phase: 'ready', sessionId: 'session-1', cwd: '/Users/me/project', panelOpen: true, status: statusFixture(), diff: null, anchorTop: null, diffWidth: 470, ...state }
   const store = {
     ...fakeStore(snapshot),
     openPanel: value => { calls.openPanel.push(value) },
     movePanel: (pos) => { calls.movePanel.push(pos); snapshot.pos = pos },
     commitPanel: pos => { calls.commitPanel.push(pos) },
     resetPanel: () => { calls.resetPanel += 1 },
+    closeDiff: () => { calls.closeDiff += 1 },
+    setDiffWidth: (width) => { calls.diffWidth.push(width); snapshot.diffWidth = width },
+    persistLayout: () => { calls.persist += 1 },
   }
   const tree = mini.mount(bundle.components['dsh-hud-panel'], { t: T, store })
   return { tree, store, calls, mini, bundle }
@@ -625,7 +628,7 @@ function diffFixture(overrides = {}) {
   ]
   return {
     repo: '/Users/me/project',
-    path: 'a.ts',
+    path: 'src/a.ts',
     origPath: null,
     untracked: false,
     worktree: { rows, additions: 2, deletions: 1, hunks: 1, binary: false, truncated: false },
@@ -638,8 +641,8 @@ function diffState(overrides = {}) {
   return {
     diff: {
       phase: 'ready',
-      path: 'a.ts',
-      file: 'a.ts',
+      path: 'src/a.ts',
+      file: 'src/a.ts',
       origPath: null,
       data: diffFixture(),
       side: 'worktree',
@@ -665,7 +668,6 @@ test('差异视图：行号、文本与增删底色', () => {
   const node = renderPanel(diffState())
 
   const text = textOf(node)
-  assert.ok(text.includes('diff.back'), '有返回按钮')
   assert.ok(text.includes('+2') && text.includes('-1'), '显示增删计数')
   assert.ok(text.includes('keep') && text.includes('new') && text.includes('more'))
   assert.ok(!text.includes('panel.summary'), '差异模式下不再显示改动概览')
@@ -700,7 +702,7 @@ test('差异视图：页签、自动换行、返回都走 store', () => {
   findAll(node, byText('diff.wrap'))[0].props.onClick()
   assert.equal(calls.wrap, 1)
 
-  findAll(node, node2 => typeof node2.children?.[0] === 'string' && node2.children[0].startsWith('←'))[0].props.onClick()
+  findButton(node, 'diff.close').props.onClick()
   assert.equal(calls.close, 1)
 })
 
@@ -846,4 +848,79 @@ test('最近提交：没有提交就整段不渲染', () => {
 test('最近提交：超过 30 天回退到提交自己的日期', () => {
   const old = [{ sha: 'aaaaaaa', author: 'wjc', date: '2025-01-02', committedAt: Date.now() - 400 * 24 * 3600 * 1000, refs: [], subject: '很久以前' }]
   assert.ok(textOf(renderPanel({ commits: old })).includes('2025-01-02'))
+})
+
+/* -------------------------------------------------- 两栏工作台（diff 模式） */
+
+test('工作台：左栏常驻改动清单，右栏是差异，打开差异不换掉清单', () => {
+  const node = renderPanel(diffState())
+
+  assert.equal(findAll(node, byClass('dshh-workbench')).length, 1, '两栏容器')
+  assert.equal(findAll(node, byClass('dshh-leftpane')).length, 1, '左栏')
+  assert.equal(findAll(node, byClass('dshh-diffview')).length, 1, '右栏')
+
+  // 清单两行仍在左栏里（这正是"打开 diff 不关闭主面板"的含义）。
+  const rows = findAll(node, byClass('dshh-row'))
+  assert.equal(rows.length, 2, '左栏仍然列出全部改动')
+  assert.ok(textOf(node).includes('src/a.ts'), '清单路径可见')
+  assert.ok(textOf(node).includes('keep'), '差异内容同时可见')
+
+  // 正在看的文件在左栏高亮。
+  const active = findAll(node, byClass('dshh-rowActive'))
+  assert.equal(active.length, 1, '当前文件高亮')
+  assert.ok(active[0].props.title.startsWith('src/a.ts'), '高亮的是正在看的那个文件')
+
+  // 点击左栏另一行即可切换差异，不需要先返回。
+  assert.equal(typeof rows[0].props.onClick, 'function')
+})
+
+test('工作台：面板右边缘有抓握，宽度 = 左栏 + 抓握 + 差异栏', () => {
+  const node = renderPanel(diffState())
+  const grip = findAll(node, byClass('dshh-grip'))
+  assert.equal(grip.length, 1, '右边缘抓握')
+  assert.equal(grip[0].props['data-dsh-hud'], 'grip')
+  assert.equal(typeof grip[0].props.onPointerDown, 'function')
+
+  assert.equal(node.props.style.width, 300 + 6 + 470, '默认 470px 差异栏')
+  assert.equal(node.props.style.position, 'fixed', '抓握是绝对定位，依赖面板自身定位')
+})
+
+test('工作台：拖动右边缘改差异宽度，松手才落盘', () => {
+  const { tree, bundle, calls } = mountPanel({ ...diffState().diff === null ? {} : {}, diff: diffState().diff })
+  const grip = findAll(tree, byClass('dshh-grip'))[0]
+
+  let prevented = false
+  grip.props.onPointerDown({ button: 0, pointerId: 9, clientX: 1000, preventDefault: () => { prevented = true } })
+  assert.equal(prevented, true, '抓握按下要阻止文本选择')
+
+  const move = bundle.listeners.get('pointermove')?.[0]?.listener
+  const up = bundle.listeners.get('pointerup')?.[0]?.listener
+  assert.equal(typeof move, 'function', '按下后注册 window 拖动监听')
+
+  move({ pointerId: 9, clientX: 940 })
+  assert.deepEqual(calls.diffWidth, [530], '往左拖 60px → 差异栏 470 + 60')
+
+  up({ pointerId: 9 })
+  assert.equal(calls.persist, 1, '松手落盘')
+  assert.equal(bundle.listeners.get('pointermove')?.length ?? 0, 0, '松手解除监听')
+})
+
+test('工作台：Esc 是"退一层"——先关差异，再按才收起面板', () => {
+  const { bundle, calls } = mountPanel({ diff: diffState().diff })
+  const keydown = bundle.listeners.get('keydown')?.[0]?.listener
+  assert.equal(typeof keydown, 'function')
+
+  keydown({ key: 'Escape' })
+  assert.equal(calls.closeDiff, 1, '先关差异')
+  assert.deepEqual(calls.openPanel, [], '此时不该收起面板')
+
+  keydown({ key: 'a' })
+  assert.equal(calls.closeDiff, 1, '其他按键不动它')
+})
+
+test('工作台：没有差异时不渲染两栏，也没有抓握', () => {
+  const node = renderPanel({ diff: null })
+  assert.equal(findAll(node, byClass('dshh-workbench')).length, 0)
+  assert.equal(findAll(node, byClass('dshh-grip')).length, 0)
+  assert.equal(node.props.style.width, 380, '回到紧凑清单宽度')
 })
