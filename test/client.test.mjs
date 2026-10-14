@@ -28,7 +28,7 @@ function loadBundle(options = {}) {
 
   const windowStub = {
     __ModuleLoader__: { load: definition => { registry.definition = definition } },
-    innerWidth: 1200,
+    innerWidth: options.innerWidth ?? 1200,
     innerHeight: 800,
     localStorage: {
       values: new Map(),
@@ -456,6 +456,17 @@ test('胶囊：外层容器复刻输入栏的 dock 行几何，胶囊自身不�
   assert.ok(dockRule.includes('margin:0 auto'), '必须居中，才能与居中的输入卡片对齐')
   assert.ok(dockRule.includes('justify-content:flex-start'), '胶囊在行内靠左')
   assert.ok(pillRule.includes('width:fit-content'), '胶囊自身锁住宽度，不撑满')
+})
+
+test('三栏的收缩规则写在样式表里：左栏固定，明细栏与差异栏一起被压缩', () => {
+  const { styles } = mountClient()
+  const css = styles[0].textContent
+  const pane = /\.dshh-commitpane\{[^}]*\}/.exec(css)?.[0] ?? ''
+
+  // 左栏是主面板（flex:none + 固定宽度），中间栏必须可收缩，否则窄窗口下会把左栏挤出面板。
+  assert.ok(pane.includes('flex:0 1 auto'), `明细栏要可收缩，实际 ${pane}`)
+  assert.ok(pane.includes('min-width:0'), 'flex 子项不写 min-width:0 就不肯缩到内容以下')
+  assert.ok(/\.dshh-leftpane\{[^}]*flex:none/.test(css), '左栏保持固定宽度')
 })
 
 test('胶囊：超长分支名中段省略，不把简写符挤出可见区', () => {
@@ -1030,12 +1041,12 @@ function commitDiffState(overrides = {}) {
   }
 }
 
-test('提交明细：左栏一个字不动，只高亮打开的那条；明细在右栏', () => {
+test('提交明细：三栏——左栏一个字不动，只高亮打开的那条；明细在中间栏', () => {
   const withCommits = { ...commitState(), commits: COMMITS }
   const single = renderPanel({ ...withCommits, commit: null, diff: null })
   const node = renderPanel(withCommits)
 
-  // 两栏，且左栏与"没有提交明细"时逐字一致 —— 打开提交不改动主面板。
+  // 工作台，且左栏与"没有提交明细"时逐字一致 —— 打开提交不改动主面板。
   assert.equal(findAll(node, byClass('dshh-workbench')).length, 1)
   const left = findAll(node, byClass('dshh-leftpane'))[0]
   assert.equal(
@@ -1049,9 +1060,9 @@ test('提交明细：左栏一个字不动，只高亮打开的那条；明细�
   assert.equal(findAll(left, byClass('dshh-commitActive')).length, 1)
   assert.equal(findAll(node, byClass('dshh-rowActive')).length, 0, '左栏的工作区清单不该跟着高亮')
 
-  // 右栏是这次提交的明细：元信息 + 清单。
-  const right = findAll(node, byClass('dshh-detail'))[0]
-  assert.ok(right, '右栏渲染明细')
+  // 中间那一栏是这次提交的明细：元信息 + 清单。
+  const right = findAll(node, byClass('dshh-commitpane'))[0]
+  assert.ok(right, '中间栏渲染明细')
   const rightText = textOf(right)
   assert.ok(rightText.includes('2eed74e'), '短 sha')
   assert.ok(rightText.includes('feat: 差异视图'), '提交标题')
@@ -1064,13 +1075,13 @@ test('提交明细：左栏一个字不动，只高亮打开的那条；明细�
   assert.ok(textOf(right).includes('src/old.ts → src/new.ts'), '重命名行与工作区清单同形')
 })
 
-test('提交明细：点清单里的文件打开该文件的差异；✕ 收起整块明细', () => {
+test('提交明细：点清单里的文件打开该文件的差异（差异在右边那一栏）', () => {
   const calls = { files: [], detail: 0 }
   const node = renderPanel(commitState(), {
     methods: { openCommitDiff: file => calls.files.push(file), closeDetail: () => { calls.detail += 1 } },
   })
 
-  const rows = findAll(findAll(node, byClass('dshh-detail'))[0], byClass('dshh-row'))
+  const rows = findAll(findAll(node, byClass('dshh-commitpane'))[0], byClass('dshh-row'))
   rows[1].props.onClick()
   assert.deepEqual(calls.files.map(file => file.file), ['src/new.ts'])
   assert.equal(calls.files[0].origFile, 'src/old.ts', '重命名要把原路径一起带上')
@@ -1078,47 +1089,70 @@ test('提交明细：点清单里的文件打开该文件的差异；✕ 收起�
 
 test('提交明细：空提交、读取中、找不到这次提交各有文案', () => {
   const empty = renderPanel(commitState({ files: [] }))
-  const emptyDetail = findAll(empty, byClass('dshh-detail'))[0]
-  assert.ok(textOf(emptyDetail).includes('commit.empty'))
-  assert.equal(findAll(emptyDetail, byClass('dshh-row')).length, 0, '明细里没有文件行')
-  assert.equal(findAll(empty, byClass('dshh-workbench')).length, 1, '明细在场仍然是两栏（左栏照旧）')
+  const emptyPane = findAll(empty, byClass('dshh-commitpane'))[0]
+  assert.ok(textOf(emptyPane).includes('commit.empty'))
+  assert.equal(findAll(emptyPane, byClass('dshh-row')).length, 0, '明细里没有文件行')
+  assert.equal(findAll(empty, byClass('dshh-workbench')).length, 1, '明细在场就进工作台（左栏照旧）')
+  assert.equal(findAll(empty, byClass('dshh-diffview')).length, 0, '空提交没有差异栏')
+  assert.equal(findAll(empty, byClass('dshh-grip')).length, 0, '没有差异栏就没有抓握')
+  assert.equal(empty.props.style.width, 380 + 240, '左栏 + 明细栏')
 
   const loading = renderPanel(commitState({ phase: 'loading' }))
-  assert.ok(textOf(findAll(loading, byClass('dshh-detail'))[0]).includes('commit.loading'))
+  assert.ok(textOf(findAll(loading, byClass('dshh-commitpane'))[0]).includes('commit.loading'))
 
   const unknown = renderPanel(commitState({ phase: 'error', errorCode: 'unknown-commit' }))
-  assert.ok(textOf(findAll(unknown, byClass('dshh-detail'))[0]).includes('commit.unknown'))
+  assert.ok(textOf(findAll(unknown, byClass('dshh-commitpane'))[0]).includes('commit.unknown'))
 
   const timeout = renderPanel(commitState({ phase: 'error', errorCode: 'timeout' }))
-  assert.ok(textOf(findAll(timeout, byClass('dshh-detail'))[0]).includes('err.timeout'))
+  assert.ok(textOf(findAll(timeout, byClass('dshh-commitpane'))[0]).includes('err.timeout'))
 })
 
 test('提交明细：合并提交明确说按第一父提交比较', () => {
-  assert.ok(textOf(findAll(renderPanel(commitState({ merge: true })), byClass('dshh-detail'))[0]).includes('commit.merge'))
+  assert.ok(textOf(findAll(renderPanel(commitState({ merge: true })), byClass('dshh-commitpane'))[0]).includes('commit.merge'))
 })
 
-test('提交差异：右栏是明细 + 差异，没有 未暂存/已暂存 页签', () => {
+test('提交差异：三栏 = 左栏 + 提交明细栏 + 差异栏，差异栏没有 未暂存/已暂存 页签', () => {
   const node = renderPanel(commitDiffState())
 
   assert.equal(findAll(node, byClass('dshh-workbench')).length, 1)
-  assert.equal(node.props.style.width, 380 + 6 + 470, '宽度与工作区差异一致')
-  assert.equal(findAll(node, byClass('dshh-grip')).length, 1)
+  assert.equal(findAll(node, byClass('dshh-leftpane')).length, 1, '左栏')
+  assert.equal(findAll(node, byClass('dshh-commitpane')).length, 1, '提交明细栏')
+  assert.equal(findAll(node, byClass('dshh-diffview')).length, 1, '差异栏')
+  assert.equal(node.props.style.width, 380 + 240 + 6 + 470, '左栏 + 明细栏 + 抓握 + 差异栏')
+  assert.equal(findAll(node, byClass('dshh-commitpane'))[0].props.style.width, 240, '明细栏是固定宽度')
+  assert.equal(findAll(node, byClass('dshh-grip')).length, 1, '抓握仍只调整差异栏')
 
-  const right = findAll(node, byClass('dshh-detail'))[0]
-  const text = textOf(right)
-  assert.ok(text.includes('2eed74e') && text.includes('feat: 差异视图'), '明细头还在差异上方')
-  assert.ok(text.includes('commit.files'), '清单也还在（差异是明细的第三段）')
-  assert.ok(!text.includes('diff.worktree') && !text.includes('diff.index'), '提交差异没有两侧页签')
-  assert.ok(!text.includes('diff.untrackedHint'), '提交里的文件不存在"未跟踪"这回事')
-  assert.ok(text.includes('diff.wrap') && text.includes('diff.copy'), '换行与复制仍在')
-  assert.ok(text.includes('keep') && text.includes('+2') && text.includes('-1'), '差异内容与计数照常')
+  const middle = findAll(node, byClass('dshh-commitpane'))[0]
+  const middleText = textOf(middle)
+  assert.ok(middleText.includes('2eed74e') && middleText.includes('feat: 差异视图'), '明细栏的头部')
+  assert.ok(middleText.includes('commit.files'), '明细栏里是这次提交的清单')
+  assert.ok(!middleText.includes('keep'), '差异不在明细栏里')
 
-  const files = findAll(right, byClass('dshh-row'))
-  assert.equal(findAll(right, byClass('dshh-rowActive')).length, 1, '正在看的那份差异在明细清单里高亮')
+  const diffText = textOf(findAll(node, byClass('dshh-diffview'))[0])
+  assert.ok(!diffText.includes('diff.worktree') && !diffText.includes('diff.index'), '提交差异没有两侧页签')
+  assert.ok(!diffText.includes('diff.untrackedHint'), '提交里的文件不存在"未跟踪"这回事')
+  assert.ok(diffText.includes('diff.wrap') && diffText.includes('diff.copy'), '换行与复制仍在')
+  assert.ok(diffText.includes('keep') && diffText.includes('+2') && diffText.includes('-1'), '差异内容与计数照常')
+
+  const files = findAll(middle, byClass('dshh-row'))
+  assert.equal(findAll(middle, byClass('dshh-rowActive')).length, 1, '正在看的那份差异在明细清单里高亮')
   assert.ok(files[0].props.title.startsWith('src/a.ts'))
 })
 
-test('提交差异：明细里的清单与左栏清单用不同的行标记（键盘滚动不能滚错栏）', () => {
+test('提交明细：窄窗口下三栏不溢出——固定栏保持，差异栏压小', () => {
+  const node = mountClient({ innerWidth: 900 }).components['dsh-hud-panel']({
+    t: T,
+    store: { ...fakeStore({ ...commitDiffState(), panelOpen: true, anchorTop: null }), stepFile() {}, openCursor() {}, stepHunk() {}, toggleHunk() {}, closeDetail() {} },
+  })
+
+  // 目标宽度 380+240+6+470=1096 > 可用 884：整体夹到可视范围，左栏与明细栏仍是固定宽度，
+  // 弹性的是差异栏（784 - 380 - 240 = 就剩这些）。
+  assert.equal(node.props.style.width, 900 - 2 * 8)
+  assert.equal(findAll(node, byClass('dshh-leftpane'))[0].props.style.width, 380)
+  assert.equal(findAll(node, byClass('dshh-commitpane'))[0].props.style.width, 240)
+})
+
+test('提交明细栏：清单与左栏清单用不同的行标记（键盘滚动不能滚错栏）', () => {
   const node = renderPanel(commitDiffState())
   const rows = findAll(node, byClass('dshh-row'))
   const lists = rows.map(row => row.props['data-row-list'])
