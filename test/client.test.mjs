@@ -670,7 +670,7 @@ test('差异视图：行号、文本与增删底色', () => {
   const text = textOf(node)
   assert.ok(text.includes('+2') && text.includes('-1'), '显示增删计数')
   assert.ok(text.includes('keep') && text.includes('new') && text.includes('more'))
-  assert.ok(!text.includes('panel.summary'), '差异模式下不再显示改动概览')
+  assert.ok(text.includes('panel.summary'), '改动概览仍在（它就是左栏不可变的那部分）')
 
   // 两个行号槽：上下文行两侧都有行号，删除行只有旧行号，新增行只有新行号。
   const ctx = findAll(node, byClass('dshh-difrow')).find(row => row.props.className.includes('dshh-difrow-ctx'))
@@ -881,7 +881,7 @@ test('工作台：面板右边缘有抓握，宽度 = 左栏 + 抓握 + 差异�
   assert.equal(grip[0].props['data-dsh-hud'], 'grip')
   assert.equal(typeof grip[0].props.onPointerDown, 'function')
 
-  assert.equal(node.props.style.width, 300 + 6 + 470, '默认 470px 差异栏')
+  assert.equal(node.props.style.width, 380 + 6 + 470, '左栏与单栏同为 380px，差异栏默认 470px')
   assert.equal(node.props.style.position, 'fixed', '抓握是绝对定位，依赖面板自身定位')
 })
 
@@ -923,4 +923,38 @@ test('工作台：没有差异时不渲染两栏，也没有抓握', () => {
   assert.equal(findAll(node, byClass('dshh-workbench')).length, 0)
   assert.equal(findAll(node, byClass('dshh-grip')).length, 0)
   assert.equal(node.props.style.width, 380, '回到紧凑清单宽度')
+})
+
+test('工作台：左栏与单栏面板逐字一致——点击不改变左栏', () => {
+  const single = renderPanel({ diff: null })
+  const withDiff = renderPanel(diffState())
+
+  const singleBody = findAll(single, byClass('dshh-body'))[0]
+  const leftPane = findAll(withDiff, byClass('dshh-leftpane'))[0]
+  assert.ok(singleBody && leftPane)
+
+  assert.equal(
+    textOf(leftPane),
+    textOf(singleBody),
+    '左栏内容必须与单栏视图完全相同（仓库路径、上游、oid、改动概览、提交、清单一个都不少）',
+  )
+
+  // 宽度也一致：左栏就是原来那个面板，不因打开差异而变窄。
+  assert.equal(leftPane.props.style.width, 380)
+  assert.equal(single.props.style.width, 380)
+
+  // 只有差异栏是"新出现"的东西。
+  assert.equal(findAll(single, byClass('dshh-diffview')).length, 0)
+  assert.equal(findAll(withDiff, byClass('dshh-diffview')).length, 1)
+})
+
+test('工作台：左栏保留仓库路径与提交段，不只留计数和清单', () => {
+  const node = renderPanel({ ...diffState(), commits: COMMITS })
+  const leftText = textOf(findAll(node, byClass('dshh-leftpane'))[0])
+
+  assert.ok(leftText.includes('/Users/me/project'), '仓库路径')
+  assert.ok(leftText.includes('panel.upstream'), '上游')
+  assert.ok(leftText.includes('panel.summary'), '改动概览标题')
+  assert.ok(leftText.includes('panel.commits'), '最近提交段')
+  assert.ok(leftText.includes('panel.changes'), '改动清单')
 })
