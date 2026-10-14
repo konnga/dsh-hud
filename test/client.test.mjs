@@ -124,6 +124,12 @@ function mountClient(options = {}) {
       return fn()
     },
     locale: { register: () => () => {} },
+    // 需要驱动真实 store 的用例自己注入 rpc stub；默认直接拒绝，免得静默走空。
+    connection: {
+      rpc: {
+        call: options.rpc ?? (() => Promise.reject(new Error('这个用例没有注入 rpc stub'))),
+      },
+    },
     slots: {
       inject(_key, callback) {
         callback()
@@ -186,6 +192,10 @@ function findByAttr(node, value, depth = 0) {
 
 /** 假 store：组件只通过 getSnapshot/subscribe 读它。 */
 function fakeStore(state) {
+  // 真实快照总是带 diff / commit 两个字段（都是 null 起）：这里就地补上，
+  // 组件用例不必每个都写一遍，同时保持快照对象本身的引用（有测试靠它观察变更）。
+  if (!('diff' in state)) state.diff = null
+  if (!('commit' in state)) state.commit = null
   return {
     getSnapshot: () => state,
     subscribe: () => () => {},
@@ -201,6 +211,9 @@ function fakeStore(state) {
     closeDiff: () => {},
     setDiffSide: () => {},
     toggleDiffWrap: () => {},
+    openCommit: () => {},
+    openCommitDiff: () => {},
+    closeCommit: () => {},
   }
 }
 
@@ -301,6 +314,37 @@ test('apply 注册胶囊与面板两个座位，位置与作用域都不重复',
   }
   // 会话作用域的座位要从 inject 参数带出 sessionId。
   assert.equal(byId['dsh-hud-pill'].inject('session-1').sessionId, 'session-1')
+})
+
+test('词典：代码里用到的每个 key 在 zh / en 里都有值（漏一个就会把 key 显示给用户）', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+
+  // 取出两份词典：`var zh = { ... };` / `var en = { ... };`
+  const dictOf = (name) => {
+    const match = new RegExp(`var ${name} = \\{([\\s\\S]*?)\\n    \\};`).exec(source)
+    assert.ok(match, `找不到 ${name} 词典`)
+    return Object.fromEntries([...match[1].matchAll(/"([^"]+)":\s*"((?:[^"\\]|\\.)*)"/g)].map(item => [item[1], item[2]]))
+  }
+  const zh = dictOf('zh')
+  const en = dictOf('en')
+
+  // 代码里所有 t("...") 的 key（跳过词典自身的字面量行）。
+  // 前缀一个非标识符字符：否则 `createElement("button")` 里的 t 也会被当成 t("button")。
+  const used = new Set([...source.matchAll(/(?:^|[^\w$])t\("([^"]+)"\)/gm)].map(match => match[1]))
+  assert.ok(used.size > 20, `应当抽到足够多的 key，实际 ${String(used.size)}`)
+
+  for (const key of used) {
+    assert.ok(key in zh, `zh 缺少 ${key}`)
+    assert.ok(key in en, `en 缺少 ${key}`)
+    assert.notEqual(en[key], '', `en.${key} 不能是空串`)
+  }
+  // 两份词典的 key 集合必须一致（否则切语言会出现原始 key）。
+  assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort())
+
+  // 动态 key 也要在（errorText 会按宿主半的 code 拼 key）。
+  for (const key of ['err.timeout', 'err.no-cwd', 'err.git-missing', 'err.invalid-cwd', 'err.git-failed', 'err.invalid-path', 'err.stale-host', 'err.transport', 'commit.unknown']) {
+    assert.ok(zh[key] && en[key], `动态 key ${key} 必须在两份词典里`)
+  }
 })
 
 test('apply 装上词典、自有样式与唯一一个轮询定时器', () => {
@@ -545,7 +589,7 @@ function findButton(node, label, depth = 0) {
 function mountPanel(state = {}, options = {}) {
   const mini = createMiniReact()
   const bundle = mountClient({ ReactImpl: mini.React })
-  const calls = { openPanel: [], movePanel: [], commitPanel: [], resetPanel: 0, diffWidth: [], closeDiff: 0, persist: 0 }
+  const calls = { openPanel: [], movePanel: [], commitPanel: [], resetPanel: 0, diffWidth: [], closeDiff: 0, closeCommit: 0, persist: 0 }
   // 快照是可变对象：movePanel 必须更新它，否则「松开时从 store 现读位置」读不到东西。
   const snapshot = { phase: 'ready', sessionId: 'session-1', cwd: '/Users/me/project', panelOpen: true, status: statusFixture(), diff: null, anchorTop: null, diffWidth: 470, ...state }
   const store = {
@@ -555,6 +599,7 @@ function mountPanel(state = {}, options = {}) {
     commitPanel: pos => { calls.commitPanel.push(pos) },
     resetPanel: () => { calls.resetPanel += 1 },
     closeDiff: () => { calls.closeDiff += 1 },
+    closeCommit: () => { calls.closeCommit += 1 },
     setDiffWidth: (width) => { calls.diffWidth.push(width); snapshot.diffWidth = width },
     persistLayout: () => { calls.persist += 1 },
   }
@@ -876,12 +921,13 @@ test('最近提交：一行一条，带短 sha、标题、HEAD 徽标与相对�
   assert.ok(text.includes('2' + 'time.hours'))
 })
 
-test('最近提交：悬停给出作者、日期与 refs', () => {
+test('最近提交：悬停给出点击提示、作者、日期与 refs', () => {
   const node = renderPanel({ commits: COMMITS })
   const first = findAll(node, byClass('dshh-commit'))[0]
   const lines = first.props.title.split('\n')
-  assert.equal(lines[0], 'feat: 差异视图')
-  assert.equal(lines[1], 'wjc · 2026-10-14')
+  assert.equal(lines[0], 'commit.click', '第一行说明这行可点')
+  assert.equal(lines[2], 'feat: 差异视图')
+  assert.equal(lines[3], 'wjc · 2026-10-14')
   assert.ok(lines.includes('HEAD -> main') && lines.includes('origin/main'))
 })
 
@@ -894,6 +940,275 @@ test('最近提交：没有提交就整段不渲染', () => {
 test('最近提交：超过 30 天回退到提交自己的日期', () => {
   const old = [{ sha: 'aaaaaaa', author: 'wjc', date: '2025-01-02', committedAt: Date.now() - 400 * 24 * 3600 * 1000, refs: [], subject: '很久以前' }]
   assert.ok(textOf(renderPanel({ commits: old })).includes('2025-01-02'))
+})
+
+test('最近提交：整行可点，点击把这次提交交给 store', () => {
+  const opened = []
+  const node = renderPanel({ commits: COMMITS }, { methods: { openCommit: commit => opened.push(commit) } })
+  const rows = findAll(node, byClass('dshh-commit'))
+  assert.ok(rows.every(row => row.type === 'button'), '每行都是按钮（可点）')
+
+  rows[1].props.onClick()
+  assert.equal(opened.length, 1)
+  assert.equal(opened[0].sha, '1097168')
+  assert.equal(opened[0].subject, 'fix: 胶囊与输入卡片左对齐')
+})
+
+/* --------------------------------------------------------------- 提交视图 */
+
+/** 提交页的 store 状态。 */
+function commitState(overrides = {}) {
+  return {
+    commit: {
+      phase: 'ready',
+      sha: '2eed74e0000000000000000000000000000000000',
+      shortSha: '2eed74e',
+      subject: 'feat: 差异视图（点击文件看 diff）',
+      author: 'wjc',
+      date: '2026-10-14',
+      committedAt: Date.now() - 3600 * 1000,
+      refs: ['HEAD -> main'],
+      merge: false,
+      files: [
+        { status: 'M', path: 'src/a.ts', file: 'src/a.ts', origFile: null },
+        { status: 'R', path: 'src/old.ts → src/new.ts', file: 'src/new.ts', origFile: 'src/old.ts' },
+      ],
+      truncated: false,
+      errorCode: null,
+      ...overrides,
+    },
+  }
+}
+
+/** 提交差异的 store 状态（右栏只有一个"侧"）。 */
+function commitDiffState(overrides = {}) {
+  return {
+    commit: commitState().commit,
+    diff: {
+      source: 'commit',
+      phase: 'ready',
+      sha: '2eed74e0000000000000000000000000000000000',
+      shortSha: '2eed74e',
+      subject: 'feat: 差异视图（点击文件看 diff）',
+      path: 'src/a.ts',
+      file: 'src/a.ts',
+      origPath: null,
+      data: { rows: diffFixture().worktree.rows, additions: 2, deletions: 1, hunks: 1, binary: false, truncated: false },
+      side: 'commit',
+      wrap: false,
+      errorCode: null,
+      ...overrides,
+    },
+  }
+}
+
+test('提交视图：左栏换成这次提交（返回按钮 + 元信息 + 改动清单）', () => {
+  const node = renderPanel(commitState())
+
+  assert.equal(findAll(node, byClass('dshh-workbench')).length, 0, '没打开差异时仍是单栏')
+  const text = textOf(node)
+  assert.ok(text.includes('commit.back'), '有返回入口')
+  assert.ok(text.includes('2eed74e'), '短 sha')
+  assert.ok(text.includes('feat: 差异视图'), '提交标题')
+  assert.ok(text.includes('wjc · 2026-10-14'), '作者与日期')
+  assert.ok(text.includes('HEAD -> main'), 'refs')
+  assert.ok(text.includes('commit.files'), '改动清单标题是"这次提交改动"')
+
+  // 左栏不再显示工作区那套（改动概览 / 最近提交 / 工作区清单）。
+  assert.ok(!text.includes('panel.summary'), '工作区概览让位给提交页')
+  assert.ok(!text.includes('panel.commits'), '提交列表让位给提交页')
+  assert.ok(!text.includes('panel.changes · '), '工作区改动清单让位给这次提交的清单')
+
+  // 这次提交的两行都在，重命名行的展示与工作区清单同形。
+  const rows = findAll(node, byClass('dshh-row'))
+  assert.equal(rows.length, 2)
+  assert.ok(text.includes('src/old.ts → src/new.ts'))
+})
+
+test('提交视图：点提交里的文件打开该文件的差异；返回把两样一起收起', () => {
+  const calls = { files: [], back: 0 }
+  const node = renderPanel(commitState(), {
+    methods: { openCommitDiff: file => calls.files.push(file), closeCommit: () => { calls.back += 1 } },
+  })
+
+  const rows = findAll(node, byClass('dshh-row'))
+  rows[1].props.onClick()
+  assert.deepEqual(calls.files.map(file => file.file), ['src/new.ts'])
+  assert.equal(calls.files[0].origFile, 'src/old.ts', '重命名要把原路径一起带上')
+
+  findButton(node, 'commit.back').props.onClick()
+  assert.equal(calls.back, 1)
+})
+
+test('提交视图：空提交、读取中、找不到这次提交各有文案', () => {
+  const empty = renderPanel(commitState({ files: [] }))
+  assert.ok(textOf(empty).includes('commit.empty'), '空提交要说清楚，而不是开一个空差异')
+  assert.equal(findAll(empty, byClass('dshh-row')).length, 0)
+
+  assert.ok(textOf(renderPanel(commitState({ phase: 'loading' }))).includes('commit.loading'))
+  assert.ok(textOf(renderPanel(commitState({ phase: 'error', errorCode: 'unknown-commit' }))).includes('commit.unknown'))
+  assert.ok(textOf(renderPanel(commitState({ phase: 'error', errorCode: 'timeout' }))).includes('err.timeout'))
+})
+
+test('提交视图：合并提交明确说按第一父提交比较', () => {
+  assert.ok(textOf(renderPanel(commitState({ merge: true }))).includes('commit.merge'))
+})
+
+test('提交差异：右栏没有 未暂存/已暂存 页签，换成短 sha；两栏与抓握照旧', () => {
+  const node = renderPanel(commitDiffState())
+
+  assert.equal(findAll(node, byClass('dshh-workbench')).length, 1, '打开差异后仍是两栏')
+  assert.equal(findAll(node, byClass('dshh-leftpane')).length, 1, '左栏还是这次提交的页面')
+  assert.equal(node.props.style.width, 380 + 6 + 470, '宽度与工作区差异一致')
+  assert.equal(findAll(node, byClass('dshh-grip')).length, 1)
+
+  const text = textOf(node)
+  assert.ok(!text.includes('diff.worktree') && !text.includes('diff.index'), '提交差异没有两侧页签')
+  assert.ok(!text.includes('diff.untrackedHint'), '提交里的文件不存在"未跟踪"这回事')
+  assert.ok(text.includes('2eed74e'), '工具栏给出短 sha')
+  assert.ok(text.includes('diff.wrap') && text.includes('diff.copy'), '换行与复制仍在')
+
+  // 内容与计数照常渲染。
+  assert.ok(text.includes('keep') && text.includes('+2') && text.includes('-1'))
+
+  const rows = findAll(node, byClass('dshh-row'))
+  assert.equal(findAll(node, byClass('dshh-rowActive')).length, 1, '正在看的文件在左栏高亮')
+  assert.ok(rows[0].props.title.startsWith('src/a.ts'))
+})
+
+test('提交差异：没有差异的提交（或文件）不会渲染两栏', () => {
+  const node = renderPanel(commitState())
+  assert.equal(findAll(node, byClass('dshh-diffview')).length, 0)
+  assert.equal(findAll(node, byClass('dshh-grip')).length, 0)
+  assert.equal(node.props.style.width, 380)
+})
+
+/* ------------------------------------------------- 提交视图（真实 store 接线） */
+
+/** 从座位注册里取共享 store（真实 store，带 rpc stub 就整条链路可测）。 */
+function realStore(options) {
+  const { registrations } = mountClient(options)
+  const entry = registrations.find(item => item.options.id === 'dsh-hud-panel')
+  return entry.options.inject().store
+}
+
+const COMMIT_VALUE = {
+  repo: '/x',
+  commit: {
+    sha: 'sha-1-full',
+    shortSha: 'sha-1',
+    subject: 'feat: 有改动',
+    author: 'wjc',
+    date: '2026-10-14',
+    committedAt: 1_700_000_000_000,
+    refs: ['HEAD -> main'],
+    merge: false,
+  },
+  files: [
+    { status: 'M', path: 'src/a.ts', file: 'src/a.ts', origFile: null },
+    { status: 'A', path: 'b.txt', file: 'b.txt', origFile: null },
+  ],
+  truncated: false,
+}
+
+const COMMIT_DIFF_VALUE = {
+  repo: '/x',
+  sha: 'sha-1-full',
+  file: 'src/a.ts',
+  path: 'src/a.ts',
+  rows: [{ kind: 'ctx', text: 'keep', oldLine: 1, newLine: 1 }],
+  additions: 0,
+  deletions: 0,
+  hunks: 1,
+  binary: false,
+  truncated: false,
+}
+
+test('提交视图（store）：点一行 → 取这次提交 → 自动打开第一个文件；返回清掉两样', async () => {
+  const calls = []
+  const store = realStore({
+    rpc: (channel, endpoint, envelope) => {
+      calls.push({ endpoint, args: envelope.args })
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'commit') return Promise.resolve({ ok: true, value: COMMIT_VALUE })
+      if (endpoint === 'commit-diff') return Promise.resolve({ ok: true, value: COMMIT_DIFF_VALUE })
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+  })
+
+  store.bindSession('session-1', '/x')
+  await store.openCommit({ sha: 'sha-1', subject: 'feat: 有改动' })
+
+  const snapshot = store.getSnapshot()
+  assert.equal(snapshot.commit.phase, 'ready')
+  assert.deepEqual(snapshot.commit.files.map(file => file.file), ['src/a.ts', 'b.txt'], '左栏拿这次提交的清单')
+  assert.equal(snapshot.commit.shortSha, 'sha-1')
+  assert.equal(snapshot.diff.source, 'commit', '右栏是提交差异')
+  assert.equal(snapshot.diff.file, 'src/a.ts', '自动打开第一个文件')
+  assert.equal(snapshot.diff.phase, 'ready')
+  assert.equal(snapshot.diff.side, 'commit', '提交差异只有一个"侧"')
+
+  const first = calls.filter(call => call.endpoint !== 'status')
+  assert.deepEqual(first.map(call => call.endpoint), ['commit', 'commit-diff'])
+  assert.deepEqual(first[0].args, { cwd: '/x', sha: 'sha-1' }, '拿点击时那个（可能是短）sha 去问')
+  assert.deepEqual(first[1].args, { cwd: '/x', sha: 'sha-1-full', path: 'src/a.ts', origPath: null }, '之后一律用解析回来的完整 sha')
+
+  // 切这次提交里的另一个文件：不再重复取提交本身。
+  await store.openCommitDiff({ file: 'b.txt', path: 'b.txt' })
+  assert.equal(store.getSnapshot().diff.file, 'b.txt')
+  assert.deepEqual(calls.filter(call => call.endpoint === 'commit').length, 1)
+
+  // 返回工作区清单：提交页与它带来的差异一起收起。
+  store.closeCommit()
+  assert.equal(store.getSnapshot().commit, null)
+  assert.equal(store.getSnapshot().diff, null)
+})
+
+test('提交视图（store）：空提交不开差异，认不出的提交给错误态', async () => {
+  const store = realStore({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'commit') return Promise.resolve({ ok: true, value: { ...COMMIT_VALUE, files: [] } })
+      return Promise.resolve({ ok: true, value: COMMIT_DIFF_VALUE })
+    },
+  })
+  store.bindSession('session-1', '/x')
+  await store.openCommit({ sha: 'sha-1' })
+  assert.equal(store.getSnapshot().commit.phase, 'ready')
+  assert.deepEqual(store.getSnapshot().commit.files, [])
+  assert.equal(store.getSnapshot().diff, null, '空提交停在左栏，不开一个空差异')
+})
+
+test('提交视图（store）：宿主半说找不到这次提交时给出可读的错误态', async () => {
+  const store = realStore({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'commit') return Promise.resolve({ ok: false, error: { details: { code: 'unknown-commit' } } })
+      return Promise.resolve({ ok: true, value: COMMIT_DIFF_VALUE })
+    },
+  })
+  store.bindSession('session-1', '/x')
+  await store.openCommit({ sha: 'deadbee' })
+  assert.equal(store.getSnapshot().commit.phase, 'error')
+  assert.equal(store.getSnapshot().commit.errorCode, 'unknown-commit')
+  assert.equal(store.getSnapshot().diff, null)
+})
+
+test('提交视图（store）：换了工作区就把提交页收起（不能显示别的仓库的提交）', async () => {
+  const store = realStore({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'commit') return Promise.resolve({ ok: true, value: COMMIT_VALUE })
+      return Promise.resolve({ ok: true, value: COMMIT_DIFF_VALUE })
+    },
+  })
+  store.bindSession('session-1', '/x')
+  await store.openCommit({ sha: 'sha-1' })
+  assert.equal(store.getSnapshot().commit.phase, 'ready')
+
+  store.bindSession('session-2', '/other')
+  assert.equal(store.getSnapshot().commit, null)
+  assert.equal(store.getSnapshot().diff, null)
 })
 
 /* -------------------------------------------------- 两栏工作台（diff 模式） */
@@ -962,6 +1277,22 @@ test('工作台：Esc 是"退一层"——先关差异，再按才收起面板',
 
   keydown({ key: 'a' })
   assert.equal(calls.closeDiff, 1, '其他按键不动它')
+})
+
+test('提交视图：Esc 也退一层——差异 → 提交页 → 面板', () => {
+  // 提交页 + 差异：先关差异（提交页留着，这样还能看别的文件）。
+  const withDiff = mountPanel(commitDiffState())
+  const keydown = withDiff.bundle.listeners.get('keydown')?.[0]?.listener
+  keydown({ key: 'Escape' })
+  assert.equal(withDiff.calls.closeDiff, 1)
+  assert.equal(withDiff.calls.closeCommit, 0, '还有提交页要看，先别退出去')
+
+  // 只剩提交页：第二次按才收起面板，且先把提交页关掉。
+  const pageOnly = mountPanel(commitState())
+  const keydown2 = pageOnly.bundle.listeners.get('keydown')?.[0]?.listener
+  keydown2({ key: 'Escape' })
+  assert.equal(pageOnly.calls.closeCommit, 1, '提交页也是一层')
+  assert.deepEqual(pageOnly.calls.openPanel, [], '退层时还不收起面板')
 })
 
 test('工作台：没有差异时不渲染两栏，也没有抓握', () => {

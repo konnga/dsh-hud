@@ -26,17 +26,22 @@
   - 标题栏：分支/DETACHED 标记，`⟳` 刷新、`⌖` 复位位置、`✕` 收起；**拖动标题栏可移动面板**，**双击标题栏复位**。
   - 仓库路径、上游分支、领先/落后、短 oid。
   - 改动概览：按类型分组的彩色计数（已修改 / 已暂存新增 / 已删除 / 重命名 / 复制 / 类型改变 / 未跟踪 / 冲突），**只显示非零项**；没有改动时显示"工作区干净"。
-  - **最近提交**：一行一条 `短sha 标题 [HEAD] 相对时间`，悬停给出作者、日期与 refs（本地/远端分支）。只在面板打开时取一次，且只有 HEAD 变了（提交、切分支、拉取）才重取；没有提交时整段不显示。
+  - **最近提交**：一行一条 `短sha 标题 [HEAD] 相对时间`，悬停给出作者、日期与 refs（本地/远端分支）。只在面板打开时取一次，且只有 HEAD 变了（提交、切分支、拉取）才重取；没有提交时整段不显示。**点击任意一行进入提交视图**（见下）。
   - 改动清单：每行一个 porcelain-v2 状态字母 + 路径，重命名读作 `旧 → 新`。**点击任意一行打开该文件的差异视图。**
   - 底栏：`只读` 与最近一次成功读取的时间。
+- **提交视图**（点击最近提交里的一行进入，**左栏换成这次提交**）：
+  - 顶部是返回入口（`← 改动清单`）、短 sha、标题、作者与日期、refs；合并提交会说明**按第一父提交比较**。
+  - 下面是**这次提交的改动清单**：状态字母与路径的样式与工作区清单一致，重命名同样读作 `旧 → 新`。
+  - **自动打开这次提交的第一个文件**——一次点击就能看到"改了什么"；点清单里其他文件即可切换。空提交会写明"这次提交没有改动文件"，不会开一个空差异。
+  - 返回（或点别的提交）即回到工作区清单，工作区那套（概览 / 提交 / 清单）原封不动。
 - **差异视图**（点击改动行进入，**两栏并排**，与 dsh-git 的 workbench 同形）：
-  - **左栏就是单栏视图本身**（同为 380px，一字不差）：仓库路径 / 上游 / 短 oid、改动概览的彩色计数、最近提交、改动清单全都在，正在查看的那一行高亮。**打开差异不改变左栏任何内容**，点左栏另一行即刻切换差异；切换会话/工作区时它也一直在。
-  - **右栏是差异**：工具栏给出文件路径、`+新增 -删除` 计数、`未暂存` / `已暂存` 页签、`自动换行`、`复制差异`、`✕ 关闭差异`。
+  - **左栏就是单栏视图本身**（同为 380px，一字不差）：仓库路径 / 上游 / 短 oid、改动概览的彩色计数、最近提交、改动清单全都在，正在查看的那一行高亮。**打开差异不改变左栏任何内容**，点左栏另一行即刻切换差异；切换会话/工作区时它也一直在；打开提交视图时左栏换成那次提交的页面。
+  - **右栏是差异**：工具栏给出文件路径、`+新增 -删除` 计数、`未暂存` / `已暂存` 页签、`自动换行`、`复制差异`、`✕ 关闭差异`。看提交的差异时没有两侧页签，改为显示这次提交的短 sha（悬停给出提示）。
   - **面板右边缘可拖动**调整差异栏宽度（默认 470px、下限 240px，宽度记在 `localStorage`）——与 dsh-git 的抓握位置一致。
   - 逐行渲染 unified diff：**旧/新两个行号槽**（`user-select:none`，方便直接拖选代码），新增行绿底、删除行红底、hunk 头加深、`diff --git` 等文件头压暗。
   - 两侧**一次取回**，切换页签不再发请求；未跟踪文件隐藏“已暂存”页签并说明它是与空文件对比。
   - 差异模式下面板**高度固定**——面板以 `bottom` 锚定，若只给 `max-height`，内容变高时整块会跳位（dsh-git 的注释里记录过这个坑）。
-  - `Esc` 是"退一层"：差异打开时先关掉差异，再按一次才收起面板。
+  - `Esc` 是"退一层"：差异打开时先关掉差异，在提交视图里再关掉提交页，都没有时才收起面板。
 
 面板的展开状态、拖动位置与"自动换行"开关记在浏览器 `localStorage`（键 `dsh-hud.ui.v1`），刷新后保持。
 
@@ -116,8 +121,10 @@ dsh plugin --profile desktop remove dsh-hud
 | `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, counts: { modified, added, deleted, renamed, copied, typeChanged, untracked, conflicted }, changes: [{ status, index, worktree, path, file, origFile }], truncated }`。`cwd` 必须是绝对路径；不是仓库时 `repo` 为 `null`（这是成功结果，不是错误）。`path` 是展示串（重命名读作 `旧 → 新`），`file`/`origFile` 是原始路径，`index`/`worktree` 是 porcelain-v2 的两个字母。 |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{ sha, author, date, committedAt, refs, subject }] }`，最新在前；`count` 钳制在 1..50，默认 10。空仓库（还没有任何提交）返回空列表而不是错误。 |
 | `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, worktree, index }`，两侧各自是 `{ rows: [{ kind: "add"\|"del"\|"ctx"\|"hunk"\|"meta", text, oldLine, newLine }], additions, deletions, hunks, binary, truncated }`。`path` 必须是**仓库内相对路径**（拒绝绝对路径、`..`、前导 `-`、控制字符）。未跟踪文件与空文件对比并把 `untracked` 置真；二进制只置 `binary`；文本按行截断（单侧 200k 字符 / 2000 行）。**解析在宿主侧完成**，浏览器半只负责渲染。 |
+| `commit` | `{ cwd, sha }` | `{ repo, commit: { sha, shortSha, subject, author, date, committedAt, refs, merge }, files: [{ status, path, file, origFile }], truncated }`。`files` 与 `status.changes` 同形（少了 porcelain 的两个字母），上限同为 200 条。`sha` 只收 **4..40 位十六进制**（`HEAD`、`HEAD~1`、`origin/main` 一律拒绝），短 sha 会解析成完整 sha 返回。非仓库时 `repo` 为 `null`；认不出的 sha 是 `unknown-commit` 错误。 |
+| `commit-diff` | `{ cwd, sha, path, origPath? }` | `{ repo, sha, shortSha, file, path, origPath, rows, additions, deletions, hunks, binary, truncated }`——与 `diff` 的**单侧**同形，所以浏览器半可以直接把它当右栏的数据。路径校验与 `diff` 相同。 |
 
-`details.code` 取值：`invalid-cwd`、`invalid-path`、`no-cwd`、`git-missing`、`git-failed`、`timeout`、`unknown-endpoint`。
+`details.code` 取值：`invalid-cwd`、`invalid-path`、`invalid-sha`、`no-cwd`、`git-missing`、`git-failed`、`unknown-commit`、`timeout`、`unknown-endpoint`。
 
 ## 数据来源与边界
 
@@ -131,7 +138,15 @@ git ls-files --error-unmatch -- <path>                            # 是否未跟
 git diff --no-color --no-ext-diff -- <path> [<origPath>]          # 工作区侧
 git diff --cached --no-color --no-ext-diff -- <path> [<origPath>] # 已暂存侧
 git diff --no-index --no-color --no-ext-diff -- /dev/null <path>  # 未跟踪文件
+git log -1 --no-color --date=short --pretty=format:… <sha>        # 提交元信息（NUL 分隔字段）
+git diff --name-status -z -M --no-color --no-ext-diff <base> <sha>          # 这次提交的改动清单
+git diff --no-color --no-ext-diff -M <base> <sha> -- <path> [<origPath>]    # 该提交里某个文件
+git show --format= --name-status -z -M <sha>                      # 根提交（没有父提交时）
 ```
+
+`base` 是**第一父提交**（`git log -1` 的 `%P` 第一个字段）；根提交没有父提交，改用 `git show`
+与空树比较。合并提交因此也给出"相对第一父提交"的清单，而不是 `git show` 默认那段常常为空的
+组合差异。
 
 - **只读**：不执行 `add`/`commit`/`checkout`/`fetch` 等任何写操作，不碰 index、工作区或 git 配置，不读取文件内容，不显示凭证。想改东西请用编辑器或终端（也可以配 `dsh-git` 那类带写操作的插件）。
 - 路径解析按 porcelain-v2 的字段数用 `indexOf` 切分，**不整行切空格**，所以含空格的路径原样保留（有测试守着）。
@@ -147,7 +162,10 @@ git diff --no-index --no-color --no-ext-diff -- /dev/null <path>  # 未跟踪文
 - 面板表面色用主题的**抬升面令牌** `--dsw-alias-bg-layer-1`、阴影用 `--dsw-shadow-lv2`。`--dsw-alias-bg-overlay` 在暗色下是 `neutral-bluish-700`（中灰），拿它当浮层底色会明显比产品本身「发灰」；差异行的增删底色是半透明 rgba（压在表面色之上，亮暗主题都可读），行号与 hunk 头走主题令牌。
 - 拖动过位置后，视图尺寸变化只会把面板**夹回**可视区域内；想回到默认锚点用 `⌖` 或双击标题栏。
 - 差异视图是**只读**的线条级着色（新增 / 删除 / 上下文 / hunk / 文件头），不含词级高亮与语法着色；不提供暂存、提交等任何写操作。
-- 差异模式的面板宽度是 `左栏 380px + 抓握 6px + 差异栏宽度`（左栏与单栏视图同宽，只有差异栏可拖）；窗口不够宽时整体收缩到可视范围内。
+- **提交视图也是只读的**，而且只认 `sha`：不提供 checkout / cherry-pick / revert 之类任何动作。提交行给的是 `log` 里的**短 sha**，两次请求之间的 HEAD 移动不影响已经打开的提交页（它显示的就是你点的那一次）。
+- 合并提交按**第一父提交**比较（见上文数据来源）；要看"相对第二父提交"的差异请用 `git show -m <sha>` 之类的命令。
+- 切换会话/工作区会收起差异与提交视图——它们绑定在具体仓库上，跨仓库显示会误导。
+- 差异模式的面板宽度是 `左栏 380px + 抓握 6px + 差异栏宽度`（左栏与单栏视图同宽，只有差异栏可拖）；窗口不够宽时整体收缩到可视范围内。提交视图沿用同一套两栏几何。
 - 需要 `dsh >= 0.1.5-rc.1`（`connection.requestRejection` 可用），且插件只在 Web GUI（`platform: web`）里有界面。
 
 ## 开发
@@ -158,17 +176,18 @@ git diff --no-index --no-color --no-ext-diff -- /dev/null <path>  # 未跟踪文
 node --test test/*.test.mjs   # 或 npm test
 ```
 
-测试分五层（`test/helpers.mjs` 是两个半边共用的假 ctx/req/res 与 RPC 客户端）：
+测试分层（`test/helpers.mjs` 是两个半边共用的假 ctx/req/res 与 RPC 客户端）：
 
 | 文件 | 覆盖 |
 | --- | --- |
 | `test/parse.test.mjs` | porcelain-v2 解析的纯函数用例（含空格路径、重命名原路径、冲突、清单截断） |
 | `test/log.test.mjs` | 最近提交：短 sha、refs、特殊字符标题（NUL 分隔而不是按列切）、条数钳制、空仓库、非仓库 |
 | `test/diff.test.mjs` | diff 解析（行号、hunk 重置、`--`/`++`/`@@` 内容行不误判、二进制、行数上限）、路径校验，以及真实仓库的工作区 / 已暂存 / 未跟踪 / 删除 / 二进制读取 |
+| `test/commit.test.mjs` | 提交视图的宿主半：`--name-status -z` 解析（重命名成对路径、空格路径、截断）、sha 校验（`HEAD`/`HEAD~1`/`--help` 一律拒绝），以及真实仓库的元信息、根提交、重命名 / 删除、合并提交按第一父提交、空提交、`unknown-commit` |
 | `test/route.test.mjs` | 线路层：假 ctx/req/res 驱动真实处理器（405 / 401 / 415 / 413 / 404 / 400 / 信封形状 / `details.code`） |
 | `test/status.test.mjs` | 在临时目录里 `git init` 的真实仓库：干净、改动分类、重命名、detached、非仓库、目录不存在 |
-| `test/client.test.mjs` | 浏览器半：假 window/document/React 评估 bundle，验证模块契约、两条座位、共享 store、样式表所有权标记与自愈、轮询，并直接渲染胶囊与面板的各种状态 |
-| `test/e2e.test.mjs` | 端到端契约：按浏览器半的方式发请求打到真实仓库，断言返回字段正是浏览器半要读的那些 |
+| `test/client.test.mjs` | 浏览器半：假 window/document/React 评估 bundle，验证模块契约、两条座位、共享 store、样式表所有权标记与自愈、轮询，直接渲染胶囊与面板的各种状态，并用真实 store + rpc stub 走通「点提交 → 取提交 → 自动打开第一个文件 → 返回」整条接线 |
+| `test/e2e.test.mjs` | 端到端契约：按浏览器半的方式发请求打到真实仓库，断言返回字段正是浏览器半要读的那些（含 `commit` / `commit-diff` 的短 sha → 完整 sha 链路） |
 
 改代码后如果装的是 `link:`，刷新页面即可；改了 `package.json` 的 `dsh.client` 或 `cordis.patch.yml` 需要重启 DSH。
 
