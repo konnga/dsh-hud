@@ -68,6 +68,17 @@
 
 本插件改成**实测**：面板打开时（以及每次会话/状态变化、窗口 resize）量一次自己胶囊所在 dock 行的位置，把面板贴到它上方 8px。用**自己的** `data-dsh-hud="dock"` 标记取节点，不碰产品的 DOM 选择器；量不到就退回 168px 这个常量。
 
+### 为什么样式表必须自己打 `data-plugin`
+
+框架的 `client-modules` 会对 `<style>` 做所有权登记（`claimStyles` / `removeOwnedStyles`）：
+
+- 任何模块**物化之后**，它把当下所有**没有 `data-plugin`** 的 `<style>` 认领给刚物化的那个模块；
+- HMR 的 replace / invalidate / prune 路径上按 `data-plugin` 删除该模块名下的样式表。
+
+所以没打标的表会被**别的**模块领走，并在那个模块下一次重建时被一起删掉。样式注入只跑一次的话，页面就永久退回骨架：胶囊变成原生 `button`（灰底、白字、贴着整栏最左），面板只剩内联样式撑着的壳（标题没有间隙、路径不省略、改动行是原生按钮）。
+
+本插件因此按框架自身与 `dsh-git-graph` 的约定注入：`data-plugin="dsh-hud"` + `data-plugin-css="dsh-hud/styles.css"`，注入前先按 `data-plugin-css` 复用同一节点，并在**已有的 8s 轮询与 `focus` 回调里各补一次**——被框架删掉也能自愈。
+
 ## 安装
 
 ```sh
@@ -131,6 +142,7 @@ git diff --no-index --no-color --no-ext-diff -- /dev/null <path>  # 未跟踪文
 
 - **胶囊不可省**：面板本身读不到当前会话，见上文"为什么面板要靠胶囊喂数据"。若把胶囊座位去掉，面板会停在最后一次绑定的目录上。
 - **胶囊的横向位置依赖框架的 CSS 变量**：`conversation.input.dock` 给的是整栏宽的一行，而输入卡片自身有最大宽度并居中。胶囊的外层容器复刻了框架自带 dock 占位元素（队列公告）的几何——`--dsh-composer-card-max-width`、`--dsh-composer-side-clearance`、`--dsh-composer-dock-inset`——这样才会与输入卡片左边缘对齐。这些变量名若在新版 dsh 里改动，胶囊会退回"贴着整栏最左边"（功能不受影响，只是位置不好看）。
+  - 注意这条**只有在样式表还在**时才谈得上：整张表被框架的 HMR 记账删掉时，走的是另一条路——胶囊是未样式化的原生 `button`，天然落在行首（也就是整栏最左），见「为什么样式表必须自己打 `data-plugin`」。
 - 面板锚点优先用**实测**的 dock 行位置（见「面板为什么贴着胶囊」），`COMPOSER_OFFSET = 168` 只是量不到时的兜底；那个数字来自 dsh-git 记录的「输入框堆叠高度」，不是公开契约。
 - 面板表面色用主题的**抬升面令牌** `--dsw-alias-bg-layer-1`、阴影用 `--dsw-shadow-lv2`。`--dsw-alias-bg-overlay` 在暗色下是 `neutral-bluish-700`（中灰），拿它当浮层底色会明显比产品本身「发灰」；差异行的增删底色是半透明 rgba（压在表面色之上，亮暗主题都可读），行号与 hunk 头走主题令牌。
 - 拖动过位置后，视图尺寸变化只会把面板**夹回**可视区域内；想回到默认锚点用 `⌖` 或双击标题栏。
@@ -155,7 +167,7 @@ node --test test/*.test.mjs   # 或 npm test
 | `test/diff.test.mjs` | diff 解析（行号、hunk 重置、`--`/`++`/`@@` 内容行不误判、二进制、行数上限）、路径校验，以及真实仓库的工作区 / 已暂存 / 未跟踪 / 删除 / 二进制读取 |
 | `test/route.test.mjs` | 线路层：假 ctx/req/res 驱动真实处理器（405 / 401 / 415 / 413 / 404 / 400 / 信封形状 / `details.code`） |
 | `test/status.test.mjs` | 在临时目录里 `git init` 的真实仓库：干净、改动分类、重命名、detached、非仓库、目录不存在 |
-| `test/client.test.mjs` | 浏览器半：假 window/document/React 评估 bundle，验证模块契约、两条座位、共享 store、样式与轮询，并直接渲染胶囊与面板的各种状态 |
+| `test/client.test.mjs` | 浏览器半：假 window/document/React 评估 bundle，验证模块契约、两条座位、共享 store、样式表所有权标记与自愈、轮询，并直接渲染胶囊与面板的各种状态 |
 | `test/e2e.test.mjs` | 端到端契约：按浏览器半的方式发请求打到真实仓库，断言返回字段正是浏览器半要读的那些 |
 
 改代码后如果装的是 `link:`，刷新页面即可；改了 `package.json` 的 `dsh.client` 或 `cordis.patch.yml` 需要重启 DSH。

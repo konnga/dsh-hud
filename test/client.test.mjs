@@ -54,14 +54,33 @@ function loadBundle(options = {}) {
     clearTimeout: () => {},
   }
 
+  // 假 head：样式节点进出都要反映到 `styles` 上，这样「框架把表删掉」才能被模拟。
+  const head = {
+    appendChild(element) {
+      styles.push(element)
+      element.parentNode = head
+      return element
+    },
+    removeChild(element) {
+      const index = styles.indexOf(element)
+      if (index >= 0) styles.splice(index, 1)
+      element.parentNode = null
+      return element
+    },
+  }
+
   const documentStub = {
     visibilityState: 'visible',
     createElement: () => ({ textContent: '', attributes: {}, parentNode: null, setAttribute(name, value) { this.attributes[name] = value } }),
-    head: { appendChild: (element) => { styles.push(element); element.parentNode = { removeChild() {} } } },
-    // 只认自己的 data-dsh-hud 标记；dockRect 由测试注入，不注入就当量不到。
+    head,
+    // 只认自己的两个标记：dock 行（dockRect 由测试注入）与自有样式表（按 data-plugin-css 复用）。
     querySelector(selector) {
-      if (selector !== '[data-dsh-hud="dock"]' || !options.dockRect) return null
-      return { getBoundingClientRect: () => options.dockRect }
+      if (selector === '[data-dsh-hud="dock"]') {
+        return options.dockRect ? { getBoundingClientRect: () => options.dockRect } : null
+      }
+      const tag = /^style\[data-plugin-css="([^"]+)"\]$/.exec(selector)
+      if (tag) return styles.find(element => element.attributes['data-plugin-css'] === tag[1]) ?? null
+      return null
     },
   }
 
@@ -88,7 +107,7 @@ function loadBundle(options = {}) {
     for (const entry of listeners.get(name) ?? []) entry.listener(event)
   }
 
-  return { registry, styles, listeners, intervals, timeouts, clipboardWrites, React, requireModule, windowStub, documentStub, dispatch }
+  return { registry, styles, head, listeners, intervals, timeouts, clipboardWrites, React, requireModule, windowStub, documentStub, dispatch }
 }
 
 /** 用假 ctx 调 apply，捕获座位的注册与副作用标签。 */
@@ -298,6 +317,33 @@ test('apply 装上词典、自有样式与唯一一个轮询定时器', () => {
   assert.equal(intervals.length, 1, '只应有一个轮询定时器')
   assert.equal(intervals[0].ms, 8000)
   assert.ok(listeners.has('focus'), '需要 focus 时补一次刷新')
+})
+
+test('自有样式表打上 DSH 的所有权标记，且被 HMR 记账删掉后能自愈', () => {
+  const { styles, head, intervals, listeners, dispatch } = mountClient()
+
+  // client-modules 靠 data-plugin 认领/清理样式：不打标就会被别的模块领走并删掉。
+  assert.equal(styles[0].attributes['data-plugin'], 'dsh-hud')
+  assert.equal(styles[0].attributes['data-plugin-css'], 'dsh-hud/styles.css', '稳定 tag id，重复注入复用同一节点')
+
+  // 框架在 replace/invalidate/prune 里删掉整张表 —— 轮询周期要把它补回来。
+  head.removeChild(styles[0])
+  assert.equal(styles.length, 0, '先模拟框架把表删掉')
+
+  intervals[0].callback()
+  assert.equal(styles.length, 1, '下一个轮询周期补回样式表')
+  assert.equal(styles[0].attributes['data-plugin'], 'dsh-hud')
+  assert.ok(styles[0].textContent.includes('.dshh-pill'), '补回的是同一张表')
+
+  // 幂等：没丢的时候再补一次不新增节点。
+  intervals[0].callback()
+  assert.equal(styles.length, 1, '已有节点就复用，不重复插入')
+
+  // 回到页面（focus）也补一次。
+  head.removeChild(styles[0])
+  dispatch('focus')
+  assert.equal(styles.length, 1, 'focus 时补一次样式表')
+  assert.ok(listeners.has('focus'))
 })
 
 /* ------------------------------------------------------------ 渲染逻辑 */
