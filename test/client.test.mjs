@@ -311,11 +311,33 @@ test('胶囊：简写符各自上色，与面板计数同色', () => {
 
 test('胶囊：悬停给出完整信息（路径、上游、各类型计数）', () => {
   const node = renderPill()
-  const lines = node.props.title.split('\n')
+  const button = findByAttr(node, 'pill')
+  assert.ok(button, '必须能找到胶囊按钮')
+  const lines = button.props.title.split('\n')
   assert.equal(lines[0], 'pill.title')
   assert.equal(lines[1], '/Users/me/project')
   assert.ok(lines[2].includes('main') && lines[2].includes('origin/main'), '上游分支')
   assert.ok(lines[3].includes('count.modified 2') && lines[3].includes('count.untracked 1'), '各类型计数')
+})
+
+test('胶囊：外层容器复刻输入栏的 dock 行几何，胶囊自身不撑宽', () => {
+  const node = renderPill()
+  assert.equal(node.props['data-dsh-hud'], 'dock', '胶囊应包在与输入卡片同宽的外层容器里')
+  const button = findByAttr(node, 'pill')
+  assert.equal(button.type, 'button', '可点击的是内层按钮')
+
+  const { styles } = mountClient()
+  const css = styles[0].textContent
+  const dockRule = /\.dshh-dock\{[^}]*\}/.exec(css)?.[0] ?? ''
+  const pillRule = /\.dshh-pill\{[^}]*\}/.exec(css)?.[0] ?? ''
+
+  // 关键几何：与输入卡片同宽并居中，否则左对齐的胶囊会飘到整栏最左边。
+  assert.ok(dockRule.includes('max-width:calc(var(--dsh-composer-card-max-width'), '必须跟输入卡片的最大宽度对齐')
+  assert.ok(dockRule.includes('--dsh-composer-side-clearance'), '必须扣掉侧边留白')
+  assert.ok(dockRule.includes('--dsh-composer-dock-inset'), '必须扣掉 dock 内缩')
+  assert.ok(dockRule.includes('margin:0 auto'), '必须居中，才能与居中的输入卡片对齐')
+  assert.ok(dockRule.includes('justify-content:flex-start'), '胶囊在行内靠左')
+  assert.ok(pillRule.includes('width:fit-content'), '胶囊自身锁住宽度，不撑满')
 })
 
 test('胶囊：超长分支名中段省略，不把简写符挤出可见区', () => {
@@ -324,15 +346,6 @@ test('胶囊：超长分支名中段省略，不把简写符挤出可见区', ()
   assert.ok(text.includes('…'), '应当省略')
   assert.ok(text.includes('M2'), '简写符仍然可见')
   assert.ok(!text.includes(long), '不应出现完整长名')
-})
-
-test('胶囊：锁定自身宽度，不被整行宽的 dock 座位拉成横幅', () => {
-  const { styles } = mountClient()
-  const css = styles[0].textContent
-  const pillRule = /\.dshh-pill\{[^}]*\}/.exec(css)?.[0] ?? ''
-  assert.ok(pillRule.includes('width:fit-content'), '必须锁住宽度')
-  assert.ok(pillRule.includes('align-self:flex-start'), '覆盖 flex 列拉伸')
-  assert.ok(pillRule.includes('justify-self:start'), '覆盖 grid 拉伸')
 })
 
 test('胶囊：干净仓库不带星号也不带计数', () => {
@@ -372,7 +385,7 @@ test('胶囊：未绑定工作区或不是主视图时不渲染', () => {
 test('胶囊：点击开关面板', () => {
   let toggled = 0
   const node = renderPill({}, { methods: { togglePanel: () => { toggled += 1 } } })
-  node.props.onClick()
+  findByAttr(node, 'pill').props.onClick()
   assert.equal(toggled, 1)
 })
 
