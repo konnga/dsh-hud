@@ -1,0 +1,12 @@
+# dsh-hud — bundle layer.
+#
+# 宿主半（lib/index.js）在自己的 `ctx.webServer` 上注册 `/dsh-hud-rpc` 前缀路由，
+# 收发与 `/api` 相同的 Connection RPC 信封，并用 `connection.requestRejection`
+# 复用 Host/Origin + 浏览器会话围栏；浏览器半（lib/client.js，一个 dsh.client 行）
+# 通过 `ctx.connection.rpc.call("/dsh-hud-rpc", endpoint, { args })` 取数。
+#
+# 这里故意不写 `inject`：Cordis 读取的是模块自己导出的 `inject`
+# （`["webServer", "connection"]`），在行里重复一遍只会制造第二个需要同步的地方。
+- insert:
+    - id: dsh-hud
+      name: dsh-hud
