@@ -274,12 +274,65 @@ test('apply 装上词典、自有样式与唯一一个轮询定时器', () => {
 
 /* ------------------------------------------------------------ 渲染逻辑 */
 
-test('胶囊：脏分支带上星号、领先落后与改动总数', () => {
+test('胶囊：脏分支带星号、领先落后，并用 codex-hud 式简写符分组展示改动', () => {
   const text = textOf(renderPill())
   assert.ok(text.includes('⎇ main*'), `期望分支摘要，实际 ${JSON.stringify(text)}`)
   assert.ok(text.includes('↑1'), '领先数')
   assert.ok(text.includes('↓2'), '落后数')
-  assert.ok(text.includes('· 4'), '改动总数 = 2 修改 + 1 新增 + 1 未跟踪')
+  // 简写符：M 已修改 / A 已暂存新增 / ? 未跟踪，按固定顺序。
+  assert.equal(text, '⎇ main* ↑1 ↓2 M2 A1 ?1')
+})
+
+test('胶囊：简写符只列非零项，顺序固定为 M A D R C T ? !', () => {
+  const text = textOf(renderPill({
+    status: statusFixture({
+      counts: { modified: 4, added: 0, deleted: 2, renamed: 1, copied: 0, typeChanged: 0, untracked: 3, conflicted: 1 },
+    }),
+  }))
+  assert.equal(text, '⎇ main* ↑1 ↓2 M4 D2 R1 ?3 !1')
+})
+
+test('胶囊：简写符各自上色，与面板计数同色', () => {
+  const node = renderPill()
+  const marks = []
+  const walk = (child) => {
+    if (child === null || typeof child !== 'object') return
+    if (Array.isArray(child)) return child.forEach(walk)
+    if (child.props && child.props.style && child.props.style.color) marks.push({ text: child.children?.[0], color: child.props.style.color })
+    for (const grand of child.children || []) walk(grand)
+  }
+  walk(node.children)
+
+  const byText = Object.fromEntries(marks.map(mark => [mark.text, mark.color]))
+  assert.ok(byText.M2?.includes('state-warn'), `M 应为警告色，实际 ${JSON.stringify(byText)}`)
+  assert.ok(byText.A1?.includes('state-success'), 'A 应为成功色')
+  assert.ok(byText['?1']?.includes('label-secondary'), '? 应为次级文字色')
+})
+
+test('胶囊：悬停给出完整信息（路径、上游、各类型计数）', () => {
+  const node = renderPill()
+  const lines = node.props.title.split('\n')
+  assert.equal(lines[0], 'pill.title')
+  assert.equal(lines[1], '/Users/me/project')
+  assert.ok(lines[2].includes('main') && lines[2].includes('origin/main'), '上游分支')
+  assert.ok(lines[3].includes('count.modified 2') && lines[3].includes('count.untracked 1'), '各类型计数')
+})
+
+test('胶囊：超长分支名中段省略，不把简写符挤出可见区', () => {
+  const long = 'feat/very-long-branch-name-that-keeps-going-and-going'
+  const text = textOf(renderPill({ status: statusFixture({ branch: long }) }))
+  assert.ok(text.includes('…'), '应当省略')
+  assert.ok(text.includes('M2'), '简写符仍然可见')
+  assert.ok(!text.includes(long), '不应出现完整长名')
+})
+
+test('胶囊：锁定自身宽度，不被整行宽的 dock 座位拉成横幅', () => {
+  const { styles } = mountClient()
+  const css = styles[0].textContent
+  const pillRule = /\.dshh-pill\{[^}]*\}/.exec(css)?.[0] ?? ''
+  assert.ok(pillRule.includes('width:fit-content'), '必须锁住宽度')
+  assert.ok(pillRule.includes('align-self:flex-start'), '覆盖 flex 列拉伸')
+  assert.ok(pillRule.includes('justify-self:start'), '覆盖 grid 拉伸')
 })
 
 test('胶囊：干净仓库不带星号也不带计数', () => {
