@@ -99,15 +99,24 @@ function loadBundle(options = {}) {
     throw new Error(`unexpected module: ${name}`)
   }
 
-  // bundle 主体是脚本：跑在受控的 window/document/navigator 下，它只做一次 self-register。
-  new Function('window', 'document', 'require', 'navigator', source)(windowStub, documentStub, requireModule, navigatorStub)
+  // 假 console：插件的自诊断（`[dsh-hud] …`）照收不误，但不要污染 TAP 输出 ——
+  // 顺便让"降级时说清楚为什么"这件事可以被断言，而不是只靠人看。
+  const consoleLines = []
+  const consoleStub = {
+    warn: (...args) => { consoleLines.push(args.join(' ')) },
+    error: (...args) => { consoleLines.push(args.join(' ')) },
+    log: (...args) => { consoleLines.push(args.join(' ')) },
+  }
+
+  // bundle 主体是脚本：跑在受控的 window/document/navigator/console 下，它只做一次 self-register。
+  new Function('window', 'document', 'require', 'navigator', 'console', source)(windowStub, documentStub, requireModule, navigatorStub, consoleStub)
 
   /** 触发某个 window 事件名上的全部监听（模拟浏览器派发）。 */
   const dispatch = (name, event) => {
     for (const entry of listeners.get(name) ?? []) entry.listener(event)
   }
 
-  return { registry, styles, head, listeners, intervals, timeouts, clipboardWrites, React, requireModule, windowStub, documentStub, dispatch }
+  return { registry, styles, head, listeners, intervals, timeouts, clipboardWrites, React, requireModule, windowStub, documentStub, dispatch, consoleLines }
 }
 
 /** 用假 ctx 调 apply，捕获座位的注册与副作用标签。 */
@@ -122,6 +131,22 @@ function mountClient(options = {}) {
     effect(fn, label) {
       labels.push(label)
       return fn()
+    },
+    // 按名取客户端服务：宿主没有那个客户端半边时返回 undefined（真实 ctx.get 也如此）。
+    get(name) {
+      return (options.services ?? {})[name]
+    },
+    // 动态注入：真实 Cordis 里 `ctx.inject(deps, cb)` 起一个带 inject 的子 fiber ——
+    // 全部依赖到齐才回调，缺一个就永远不回调。这里照这个语义实现（含点号子服务路径）。
+    inject(deps, callback) {
+      const provided = options.services ?? {}
+      const resolve = name => name.split('.').reduce((value, part) => (value === undefined || value === null ? undefined : value[part]), provided)
+      if (deps.some(name => resolve(name) === undefined)) return () => {}
+      const scope = { ...provided, effect: fn => fn() }
+      const dispose = callback(scope)
+      return () => {
+        if (typeof dispose === 'function') dispose()
+      }
     },
     locale: { register: () => () => {} },
     // 需要驱动真实 store 的用例自己注入 rpc stub；默认直接拒绝，免得静默走空。
@@ -178,6 +203,77 @@ function textOf(node) {
   return collectText(node).join(' ').replace(/\s+/g, ' ').trim()
 }
 
+/**
+ * 胶囊座位里**那枚 git 胶囊**的文本（限定到 `data-dsh-hud="pill"` 这一枚）。
+ *
+ * dock 一行里只有这一枚胶囊，但按标记取仍然更精确：会话归因那段挂在它尾部，直接
+ * `textOf(座位)` 会把那些字也算进"分支摘要"的断言里。
+ */
+function pillText(state = {}, options = {}) {
+  return textOf(findByAttr(renderPill(state, options), 'pill'))
+}
+
+/**
+ * 把自有样式表解析成规则（够用的小解析器，只为断言结构）。
+ *
+ * 为什么要解析而不是断言子串：**规则被吞掉时子串仍然在**（文本还在字符串里，只是浏览器
+ * 不认），所以"文本里有这个值"这种断言会假绿。解析出"哪条规则真的成立、声明是什么"才算数。
+ *
+ * 返回 `{ rules, orphan }`：`orphan` 里是没成规则的片段（多半是删规则时留下的尾巴，
+ * 或者多出来的 `}`），非空即说明样式表结构坏了。
+ */
+function parseStylesheet(css) {
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const rules = []
+  const orphan = []
+  let preludeStart = 0
+  let index = 0
+  const stack = []
+  while (index < text.length) {
+    const ch = text[index]
+    if (ch === '{') {
+      const prelude = text.slice(preludeStart, index).trim()
+      if (/^[a-z-]+\s*:/.test(prelude) || prelude.includes(';')) {
+        // 声明被当成了选择器：前面少了一个 {（或多了个 }）—— 这种片段会把后面那条规则一起吞掉。
+        const end = text.indexOf('}', index)
+        orphan.push(prelude.slice(0, 60))
+        index = end < 0 ? text.length : end + 1
+        preludeStart = index
+        continue
+      }
+      stack.push({ selector: prelude, start: index })
+      index += 1
+      continue
+    }
+    if (ch === '}') {
+      if (stack.length === 0) orphan.push('}')
+      else {
+        const open = stack.pop()
+        rules.push({
+          selector: open.selector,
+          body: text.slice(open.start + 1, index).trim(),
+        })
+      }
+      index += 1
+      preludeStart = index
+      continue
+    }
+    index += 1
+  }
+  for (const open of stack) orphan.push(open.selector || '(空选择器)')
+  return { rules, orphan }
+}
+
+/** 取自有样式表（`ensureStyles` 注入的那个 `<style>` 的文本）。 */
+function stylesheetText() {
+  return mountClient().styles[0].textContent
+}
+
+/** 按选择器取一条规则（解析出来的，不是子串匹配）。 */
+function cssRule(selector, css = stylesheetText()) {
+  return parseStylesheet(css).rules.find(rule => rule.selector === selector) ?? null
+}
+
 /** 按 data-dsh-hud 属性找出节点（同样展开函数组件）。 */
 function findByAttr(node, value, depth = 0) {
   if (depth > 20 || node === null || typeof node !== 'object') return null
@@ -214,10 +310,26 @@ function fakeStore(state) {
     openCommit: () => {},
     openCommitDiff: () => {},
     closeCommit: () => {},
+    // 会话归因那枚开关（真实 store 的面）：默认 no-op，要观察调用的用例用 `options.methods` 覆盖。
+    toggleOnlySession: () => {},
+    toggleOnlyLatest: () => {},
+    // 审阅进度（`v` 键会调它：假 store 缺这个方法就会把按键路径打崩）。
+    toggleReviewed: () => {},
+    clearReviewed: () => {},
   }
 }
 
-const T = key => key
+/**
+ * 翻译桩：返回 key，并把参数按 `name=value` 缀在后面。
+ *
+ * 保留 key 是为了让"这条文案在不在"的断言继续好写；带上参数是为了能断言"用户实际会看到的字"
+ * （比如「可能相关」那条要把命令原文贴出来，光有 key 就测不到）。
+ */
+const T = (key, params) => {
+  if (params === undefined || params === null) return key
+  const pairs = Object.keys(params).map(name => `${name}=${params[name]}`)
+  return pairs.length === 0 ? key : `${key} ${pairs.join(' ')}`
+}
 
 function statusFixture(overrides = {}) {
   return {
@@ -293,22 +405,29 @@ test('客户端插件面声明 apply 与三个硬依赖服务', () => {
   assert.deepEqual(exported.inject, ['slots', 'connection', 'locale'])
 })
 
-test('apply 注册胶囊与面板两个座位，位置与作用域都不重复', () => {
+test('apply 注册六个座位：胶囊、面板、侧栏三处状态与 ⋯ 菜单摘要', () => {
   const { registrations } = mountClient()
 
-  assert.equal(registrations.length, 2, '应当只注册两条座位')
+  assert.equal(registrations.length, 6, '应当注册六条座位')
   const byId = Object.fromEntries(registrations.map(entry => [entry.options.id, entry.options]))
-  assert.deepEqual(Object.keys(byId).sort(), ['dsh-hud-panel', 'dsh-hud-pill'])
+  assert.deepEqual(Object.keys(byId).sort(), [
+    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-session-hover', 'dsh-hud-session-leading',
+    'dsh-hud-session-menu', 'dsh-hud-session-status',
+  ])
+  assert.equal(byId['dsh-hud-session-leading'].name, 'sidebar.session.row.leading', '常亮标记坐在行首那一格')
+  assert.equal(byId['dsh-hud-session-menu'].name, 'sidebar.workspaces.session.menu.item', '只读摘要坐在 ⋯ 菜单里')
 
   assert.equal(byId['dsh-hud-panel'].name, 'shell.overlay', '面板坐在 root 作用域的浮动层')
   assert.equal(byId['dsh-hud-pill'].name, 'conversation.input.dock', '胶囊坐在会话作用域的 dock 行')
+  assert.equal(byId['dsh-hud-session-status'].name, 'sidebar.workspaces.session.row.action', '行内摘要挂在会话行悬停动作那一组里')
+  assert.equal(byId['dsh-hud-session-hover'].name, 'sidebar.session.row.hover', '详情挂在同一个会话行的悬停卡片里')
   for (const options of Object.values(byId)) {
-    assert.equal(options.locale, 'dshHud', '两个座位都要拿到本插件的词典')
+    assert.equal(options.locale, 'dshHud', '每个座位都要拿到本插件的词典')
   }
 
   for (const entry of registrations) {
     assert.equal(typeof entry.component, 'function')
-    // inject 面必须交出共享 store：两个座位看到同一份事实。
+    // inject 面必须交出共享 store：三个座位看到同一份事实。
     const injected = entry.options.inject('session-1')
     assert.ok(injected.store, `${entry.options.id} 必须拿到共享 store`)
   }
@@ -347,7 +466,7 @@ test('词典：代码里用到的每个 key 在 zh / en 里都有值（漏一个
   }
 })
 
-test('apply 装上词典、自有样式与唯一一个轮询定时器', () => {
+test('apply 装上词典、自有样式与两个轮询定时器（面板状态 / 侧栏摘要）', () => {
   const { styles, labels, intervals, listeners } = mountClient()
 
   assert.ok(labels.includes('dsh-hud: dictionaries'))
@@ -358,8 +477,9 @@ test('apply 装上词典、自有样式与唯一一个轮询定时器', () => {
   assert.equal(styles[0].attributes['data-dsh-hud'], 'styles')
   assert.ok(styles[0].textContent.includes('.dshh-panel'), '样式表要覆盖自己的类名')
   assert.ok(styles[0].textContent.includes('--dsw-alias-'), '配色走主题令牌')
-  assert.equal(intervals.length, 1, '只应有一个轮询定时器')
-  assert.equal(intervals[0].ms, 8000)
+  assert.ok(labels.includes('dsh-hud: session rows poll'))
+  // 两个节奏：面板 8s（跟着看的），侧栏摘要 12s（扫一眼的）。
+  assert.deepEqual(intervals.map(item => item.ms).sort((left, right) => left - right), [8000, 12000])
   assert.ok(listeners.has('focus'), '需要 focus 时补一次刷新')
 })
 
@@ -539,6 +659,19 @@ test('面板：正常状态列出计数与改动清单', () => {
   assert.ok(text.includes('panel.readonly'), '底栏声明只读')
 })
 
+test('面板：改动清单排在最近提交之前（先看眼前要处理的，再看背景）', () => {
+  const text = textOf(renderPanel({ commits: COMMITS }))
+  const changes = text.indexOf('panel.changes')
+  const commits = text.indexOf('panel.commits')
+  assert.ok(changes >= 0, `应渲染改动清单，实际 ${JSON.stringify(text)}`)
+  assert.ok(commits >= 0, '应渲染最近提交')
+  assert.ok(changes < commits, `改动清单要在最近提交前面，实际 ${JSON.stringify(text)}`)
+
+  // 概览仍在两者之前（顺序 = 概览 → 清单 → 提交）。
+  const summary = text.indexOf('panel.summary')
+  assert.ok(summary >= 0 && summary < changes, '改动概览在最前面')
+})
+
 test('面板：干净仓库给出明确空状态', () => {
   const text = textOf(renderPanel({
     status: statusFixture({ dirty: false, ahead: 0, behind: 0, changes: [], counts: { modified: 0, added: 0, deleted: 0, renamed: 0, copied: 0, typeChanged: 0, untracked: 0, conflicted: 0 } }),
@@ -605,7 +738,7 @@ function mountPanel(state = {}, options = {}) {
   const snapshot = { phase: 'ready', sessionId: 'session-1', cwd: '/Users/me/project', panelOpen: true, status: statusFixture(), diff: null, anchorTop: null, diffWidth: 470, ...state }
   const store = {
     ...fakeStore(snapshot),
-    openPanel: value => { calls.openPanel.push(value) },
+    openPanel: value => { calls.openPanel.push(value); snapshot.panelOpen = value },
     movePanel: (pos) => { calls.movePanel.push(pos); snapshot.pos = pos },
     commitPanel: pos => { calls.commitPanel.push(pos) },
     resetPanel: () => { calls.resetPanel += 1 },
@@ -619,6 +752,8 @@ function mountPanel(state = {}, options = {}) {
     closeCommit: () => { calls.closeCommit += 1 },
     stepFile: (delta, open) => { calls.stepFile.push([delta, open]) },
     openCursor: () => { calls.openCursor += 1 },
+    // 与 `renderSeat` 一致：允许用例覆盖 store 上的个别方法（键盘路径要观察调用）。
+    ...(options.methods ?? {}),
     stepHunk: delta => { calls.stepHunk.push(delta) },
     toggleHunk: index => { calls.toggleHunk.push(index) },
     refresh: () => { calls.refresh += 1 },
@@ -1224,7 +1359,8 @@ test('提交明细（store）：点一行 → 取这次提交 → 自动打开�
   assert.equal(snapshot.diff.phase, 'ready')
   assert.equal(snapshot.diff.side, 'commit', '提交差异只有一个"侧"')
 
-  const first = calls.filter(call => call.endpoint !== 'status')
+  // status 与 session-changes 是"每轮刷新都搭车"的只读事实，这里只看这次提交相关的调用。
+  const first = calls.filter(call => call.endpoint !== 'status' && call.endpoint !== 'session-changes' && call.endpoint !== 'session-statuses')
   assert.deepEqual(first.map(call => call.endpoint), ['commit', 'commit-diff'])
   assert.deepEqual(first[0].args, { cwd: '/x', sha: 'sha-1' }, '拿点击时那个（可能是短）sha 去问')
   assert.deepEqual(first[1].args, { cwd: '/x', sha: 'sha-1-full', path: 'src/a.ts', origPath: null }, '之后一律用解析回来的完整 sha')
@@ -1803,4 +1939,996 @@ test('工作台：左栏保留仓库路径与提交段，不只留计数和清�
   assert.ok(leftText.includes('panel.summary'), '改动概览标题')
   assert.ok(leftText.includes('panel.commits'), '最近提交段')
   assert.ok(leftText.includes('panel.changes'), '改动清单')
+})
+
+/* ------------------------------------------------- 会话归因（本会话改了哪些） */
+
+/**
+ * 一份"本会话改过哪些文件"的宿主响应（`session-changes` 的 `value`）。
+ * 形状与宿主半一致：`files[]` 里是 cwd 之内的 posix 相对路径。
+ */
+function sessionChangesValue(files, overrides = {}) {
+  return {
+    repo: '/Users/me/project',
+    sessionId: 'session-1',
+    tracking: true,
+    since: 1_700_000_000_000,
+    files: files.map(file => ({
+      path: file,
+      file,
+      writes: 1,
+      edits: 0,
+      firstAt: 1_700_000_000_000,
+      lastAt: 1_700_000_060_000,
+    })),
+    dropped: 0,
+    unconfirmed: 0,
+    ...overrides,
+  }
+}
+
+/** 面板/胶囊用到的那个 store 切片（组件只读快照）。 */
+function sessionSlice(files, overrides = {}) {
+  const byFile = {}
+  for (const item of sessionChangesValue(files).files) byFile[item.file] = item
+  return { phase: 'ready', files: byFile, since: 1_700_000_000_000, dropped: 0, errorCode: null, ...overrides }
+}
+
+test('会话归因（store）：随刷新取回，并归一成以文件为键的表', async () => {
+  const calls = []
+  const store = realStore({
+    rpc: (channel, endpoint, envelope) => {
+      calls.push({ endpoint, args: envelope.args })
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'session-changes') return Promise.resolve({ ok: true, value: sessionChangesValue(['src/a.ts', 'new file.txt']) })
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+  })
+  store.bindSession('session-1', '/Users/me/project')
+  await flush()
+
+  const call = calls.find(item => item.endpoint === 'session-changes')
+  assert.ok(call, '要跟着刷一起去取')
+  assert.deepEqual(call.args, { cwd: '/Users/me/project', sessionId: 'session-1' }, '端点要 cwd + sessionId 两个参数')
+
+  const slice = store.getSnapshot().sessionChanges
+  assert.equal(slice.phase, 'ready')
+  assert.deepEqual(Object.keys(slice.files).sort(), ['new file.txt', 'src/a.ts'])
+  assert.equal(slice.since, 1_700_000_000_000)
+})
+
+test('会话归因（store）：宿主不认这个端点时保持"没有数据"，不打标记', async () => {
+  const store = realStore({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+  })
+  store.bindSession('session-1', '/Users/me/project')
+  await flush()
+
+  const slice = store.getSnapshot().sessionChanges
+  assert.equal(slice.files, null, '拿不到就是 null（界面据此不打标记、也不过这个滤）')
+  assert.equal(slice.errorCode, 'unknown-endpoint')
+})
+
+test('会话归因（store）：换会话先清空，别把上一个会话的标记留在新会话的清单上', async () => {
+  const store = realStore({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'session-changes') return Promise.resolve({ ok: true, value: sessionChangesValue(['src/a.ts']) })
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+  })
+  store.bindSession('session-1', '/Users/me/project')
+  await flush()
+  assert.ok(store.getSnapshot().sessionChanges.files)
+
+  store.bindSession('session-2', '/Users/me/project')
+  assert.equal(store.getSnapshot().sessionChanges.files, null, '换会话先清空')
+})
+
+test('会话归因（store）：过滤发生在可见清单里，键盘导航跟着同一份走', async () => {
+  const store = realStore({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'session-changes') return Promise.resolve({ ok: true, value: sessionChangesValue(['new file.txt']) })
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+  })
+  store.bindSession('session-1', '/Users/me/project')
+  await flush()
+
+  // statusFixture 里是 src/a.ts 与 new file.txt；本会话只改了后者。
+  store.stepFile(1, false)
+  assert.equal(store.getSnapshot().cursor, 'src/a.ts', '没开过滤时从第一条开始')
+
+  store.toggleOnlySession()
+  assert.equal(store.getSnapshot().onlySession, true)
+  // 过滤开着：键盘只在本会话改过的那一条上移动。
+  store.bindSession('session-1', '/Users/me/project')
+  store.stepFile(1, false)
+  assert.equal(store.getSnapshot().cursor, 'new file.txt', '↑/↓ 不该落到被过滤掉的行的下标上')
+})
+
+test('会话归因（store）：「只看本会话改的」开关会落盘', async () => {
+  const bundle = mountClient({ rpc: () => Promise.resolve({ ok: true, value: statusFixture() }) })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+
+  store.toggleOnlySession()
+  assert.equal(store.getSnapshot().onlySession, true)
+  const saved = bundle.windowStub.localStorage.values.get('dsh-hud.ui.v1')
+  assert.ok(String(saved).includes('"onlySession":true'), `要写进 localStorage，实际 ${saved}`)
+
+  store.toggleOnlySession()
+  assert.equal(store.getSnapshot().onlySession, false)
+  assert.ok(String(bundle.windowStub.localStorage.values.get('dsh-hud.ui.v1')).includes('"onlySession":false'))
+})
+
+test('会话归因（面板）：概览下面那行给出计数与过滤开关', () => {
+  const node = renderPanel({ sessionChanges: sessionSlice(['src/a.ts', 'gone.ts']) })
+  const line = findByAttr(node, 'session')
+  assert.ok(line, '有数据时要有这一行')
+  const text = textOf(line)
+  assert.ok(text.includes('session.line'), `要报本会话改了几个，实际 ${text}`)
+  assert.ok(text.includes('session.gone'), '本会话改过、现在没差异的要单独说')
+
+  const toggle = findAll(line, node2 => node2.props?.['data-session-filter'] === 'only')[0]
+  assert.ok(toggle, '要有过滤开关')
+  assert.equal(toggle.props['aria-pressed'], 'false')
+})
+
+test('会话归因（面板）：清单行首标出 ● 本会话 / ○ 其他来源', () => {
+  const node = renderPanel({ sessionChanges: sessionSlice(['new file.txt']) })
+  const marks = findAll(node, node2 => node2.props?.['data-session-mark'])
+
+  // statusFixture：src/a.ts（别人改的）与 new file.txt（本会话新建的）。
+  assert.deepEqual(marks.map(mark => [mark.props['data-session-mark'], textOf(mark)]), [
+    ['other', '○'],
+    ['mine', '●'],
+  ])
+})
+
+test('会话归因（面板）：没有归因数据时整列不画，那一行只剩开关', () => {
+  const node = renderPanel({ sessionChanges: { phase: 'idle', files: null, since: null, dropped: 0, errorCode: null } })
+  const line = findByAttr(node, 'session')
+  assert.ok(line, '那一行要在（它带着三枚开关，不能因为数据没到就消失）')
+  assert.equal(findAll(line, item => item.props?.['data-session-filter']).length, 2, '至少还有"只看本会话改的"与侧栏档位两枚开关')
+  assert.equal(findAll(node, node2 => node2.props?.['data-session-mark']).length, 0, '也不该乱标"别人的"')
+})
+
+test('会话归因（面板）：过滤器只留本会话改的，清空时给一句说明而不是整段消失', () => {
+  const filtered = renderPanel({ onlySession: true, sessionChanges: sessionSlice(['new file.txt']) })
+  const rows = findAll(filtered, byClass('dshh-row')).filter(row => row.props['data-row-list'] === 'changes')
+  assert.equal(rows.length, 1, '只剩本会话改的那条')
+  assert.ok(textOf(rows[0]).includes('new file.txt'))
+
+  // 本会话什么都没改：清单位置给一句说明。
+  const empty = renderPanel({ onlySession: true, sessionChanges: sessionSlice([]) })
+  const emptyRows = findAll(empty, byClass('dshh-row')).filter(row => row.props['data-row-list'] === 'changes')
+  assert.equal(emptyRows.length, 0)
+  assert.ok(textOf(empty).includes('session.empty'), '要说清为什么是空的')
+})
+
+test('会话归因（面板）：点了过滤开关就走 store', () => {
+  const toggled = []
+  const node = renderPanel(
+    { sessionChanges: sessionSlice(['src/a.ts']) },
+    { methods: { toggleOnlySession: () => toggled.push(true) } },
+  )
+  findAll(node, node2 => node2.props?.['data-session-filter'] === 'only')[0].props.onClick()
+  assert.deepEqual(toggled, [true])
+})
+
+test('会话归因（胶囊）：改过东西才挂 `│ ●n`，没数据或 0 个都不显示', () => {
+  const withChanges = pillText({ sessionChanges: sessionSlice(['src/a.ts']) })
+  assert.ok(withChanges.includes('●1'), `要有本会话段，实际 ${withChanges}`)
+
+  const none = pillText({ sessionChanges: sessionSlice([]) })
+  assert.equal(none.includes('●'), false, '0 个不显示')
+
+  const noData = pillText({ sessionChanges: { phase: 'idle', files: null, since: null, dropped: 0, errorCode: null } })
+  assert.equal(noData.includes('●'), false, '没数据不显示')
+
+  // 悬停里说清这个数字是什么。
+  const node = findByAttr(renderPill({ sessionChanges: sessionSlice(['src/a.ts']) }), 'pill')
+  assert.ok(String(node.props.title).includes('session.pill'), `悬停要解释，实际 ${node.props.title}`)
+})
+
+test('会话归因（诊断）：取回与失败各留一行现场', async () => {
+  const ok = mountClient({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'session-changes') return Promise.resolve({ ok: true, value: sessionChangesValue(['src/a.ts']) })
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+  })
+  ok.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store.bindSession('session-1', '/Users/me/project')
+  await flush()
+  const line = ok.consoleLines.find(item => item.includes('session-changes {'))
+  assert.ok(line, `要有一行取回现场，实际 ${JSON.stringify(ok.consoleLines)}`)
+  assert.ok(line.includes('"files":1'), line)
+
+  const failed = mountClient({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+  })
+  failed.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store.bindSession('session-1', '/Users/me/project')
+  await flush()
+  const bad = failed.consoleLines.find(item => item.includes('session-changes-failed'))
+  assert.ok(bad, '取不到也要说清是"宿主不认这个端点"还是传输失败')
+  assert.ok(bad.includes('unknown-endpoint'), bad)
+})
+
+test('改动概览：计数芯片之间有间隔，不与相邻胶囊贴住', () => {
+  // 用解析出来的规则断言：只测"文本里有 12px"会假绿 —— 规则被吞掉时文本照样在。
+  const chips = cssRule('.dshh-chips')
+  const chip = cssRule('.dshh-chip')
+
+  assert.ok(chips, '这条规则必须真的成立（曾经因为删规则留下尾巴被浏览器整条吞掉，肉眼就是"没间隔"）')
+  assert.ok(chips.body.includes('display:flex'), `芯片行要是 flex 容器（现在 ${chips.body}）`)
+  assert.ok(chips.body.includes('gap:6px 12px'), `横向间隔要够（现在 ${chips.body}）`)
+  assert.ok(chip && chip.body.includes('padding:1px 8px'), '胶囊自身也留一点内边距')
+})
+
+test('自诊断：apply 那行报出跑着的这一版 CSS 里芯片间隔是多少', () => {
+  const bundle = mountClient()
+  const line = bundle.consoleLines.find(item => item.includes('apply {'))
+  assert.ok(line, `要有 apply 现场，实际 ${JSON.stringify(bundle.consoleLines)}`)
+  assert.ok(line.includes('"chips":"6px 12px"'), `要报出真实值，实际 ${line}`)
+})
+
+test('最近提交：标题下面与改动清单一样有一条分隔线', () => {
+  const commits = cssRule('.dshh-commits')
+  const list = cssRule('.dshh-list')
+
+  assert.ok(commits, '这条规则必须真的成立')
+  assert.ok(commits.body.includes('border-top:1px solid'), `最近提交要有分隔线（现在 ${commits.body}）`)
+  assert.ok(commits.body.includes('padding-top:4px'), '线与第一行之间要留出间距')
+  // 与改动清单用同一条线：两处取同一个主题令牌，免得两个段落各是各的灰。
+  const token = /border-top:1px solid ([^)]*\))/.exec(list?.body ?? '')?.[1]
+  assert.ok(token && commits.body.includes(token), `要和改动清单同一条线（${token}）`)
+})
+
+/* ------------------------------------------------- 样式表结构（防"规则被吞"） */
+
+test('样式表结构自检：没有孤儿片段、括号配平、关键规则都真的成立', () => {
+  const css = stylesheetText()
+  const { rules, orphan } = parseStylesheet(css)
+
+  // 1) 孤儿片段：没成规则的文本（删规则留下尾巴、多出来的 }、未闭合的 {）。
+  //    它们会把紧随其后的那条规则一起吞掉 —— 曾经就是这样让 .dshh-chips 失效的。
+  assert.deepEqual(orphan, [], `样式表里有没成规则的片段：${JSON.stringify(orphan.slice(0, 3))}`)
+
+  // 2) 注释外的中文：孤儿注释碎片会在这一步露头。
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const strayChinese = /[\u4e00-\u9fff][^;{}]{0,24}/.exec(code)
+  assert.equal(strayChinese, null, `注释外不该有中文（找到 ${strayChinese?.[0]}）`)
+
+  // 3) 每条规则的选择器都像个选择器。
+  for (const rule of rules) {
+    assert.ok(/^[.#:@*\[a-zA-Z]/.test(rule.selector), `可疑选择器：${rule.selector}`)
+    assert.ok(!rule.selector.includes(';'), `选择器里有分号：${rule.selector}`)
+  }
+
+  // 4) 关键规则一条都不能少（少一条就是被前面某段垃圾吞了）。
+  const expected = [
+    '.dshh-panel', '.dshh-dock', '.dshh-pill', '.dshh-body', '.dshh-chips', '.dshh-chip',
+    '.dshh-sectionTitle', '.dshh-list', '.dshh-row', '.dshh-commits', '.dshh-commit',
+    '.dshh-diff', '.dshh-difrow-hunk', '.dshh-grip', '.dshh-session', '.dshh-marker',
+  ]
+  const have = new Set(rules.map(rule => rule.selector))
+  const missing = expected.filter(selector => !have.has(selector))
+  assert.deepEqual(missing, [], `这些关键规则没解析出来：${JSON.stringify(missing)}`)
+
+  assert.ok(rules.length >= 70, `规则数偏少（${rules.length}），像是被吞了`)
+})
+
+/* --------------------------------------------- 命令旁听的分档显示（◐ 可能相关） */
+
+/** 一条从命令旁听来的"可能相关"记录。 */
+function possibleItem(file, reason = "sed -i 's/a/b/' " + file) {
+  return { path: file, file, hits: 1, firstAt: 1_700_000_000_000, lastAt: 1_700_000_060_000, reason }
+}
+
+/** 一条命令历史。 */
+function commandItem(command, overrides = {}) {
+  return { tool: 'bash', command, at: 1_700_000_000_000, failed: false, readOnly: false, ...overrides }
+}
+
+test('命令旁听（面板）：命令里看出来的文件标 ◐，悬停说清是哪条命令', () => {
+  const node = renderPanel({
+    sessionChanges: sessionSlice([], { possible: { 'src/a.ts': possibleItem('src/a.ts') } }),
+  })
+  const marks = findAll(node, item => item.props?.['data-session-mark'])
+  assert.deepEqual(marks.map(mark => [mark.props['data-session-mark'], textOf(mark)]), [
+    ['possible', '◐'],
+    ['other', '○'],
+  ])
+
+  const row = findAll(node, byClass('dshh-row')).filter(item => item.props['data-row-list'] === 'changes')[0]
+  const title = String(row.props.title)
+  assert.ok(title.includes('session.possibleTitle'), `悬停要给低一档的说明，实际 ${title}`)
+  assert.ok(title.includes('sed -i'), '要把那条命令贴出来（让人自己判断）')
+})
+
+test('命令旁听（面板）：同一文件两档都有时只标 ●（确定赢过可能）', () => {
+  const node = renderPanel({
+    sessionChanges: sessionSlice(['src/a.ts'], { possible: { 'src/a.ts': possibleItem('src/a.ts') } }),
+  })
+  const marks = findAll(node, item => item.props?.['data-session-mark'])
+  assert.deepEqual(marks.map(mark => mark.props['data-session-mark']), ['mine', 'other'])
+})
+
+test('命令旁听（面板）：那一行报出"另有 N 个可能相关"，悬停列出最近命令', () => {
+  const node = renderPanel({
+    sessionChanges: sessionSlice([], {
+      possible: { 'src/a.ts': possibleItem('src/a.ts'), 'new file.txt': possibleItem('new file.txt') },
+      commands: [
+        commandItem('pnpm test', { readOnly: true }),
+        commandItem('sed -i s/a/b/ src/a.ts', { failed: true }),
+      ],
+    }),
+  })
+  const line = findByAttr(node, 'session')
+  assert.ok(textOf(line).includes('session.possible'), `要报出可能相关的个数，实际 ${textOf(line)}`)
+
+  const text = findAll(line, byClass('dshh-sessionText'))[0]
+  const title = String(text.props.title)
+  assert.ok(title.includes('sed -i'), '悬停要能看到跑过的命令原文')
+  assert.ok(title.includes('session.commandFailed'), '失败的那条要标出来')
+})
+
+test('命令旁听（面板）：过滤器把"可能相关"也算本会话动过的', () => {
+  const filtered = renderPanel({
+    onlySession: true,
+    sessionChanges: sessionSlice([], { possible: { 'src/a.ts': possibleItem('src/a.ts') } }),
+  })
+  const rows = findAll(filtered, byClass('dshh-row')).filter(item => item.props['data-row-list'] === 'changes')
+  assert.equal(rows.length, 1, '命令旁听到的那条要留下（过滤器的承诺是"本会话动过的"）')
+  assert.ok(textOf(rows[0]).includes('src/a.ts'))
+})
+
+test('命令旁听（诊断）：取回时把文件数、可能相关数、命令数一起报出来', async () => {
+  const bundle = mountClient({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'session-changes') {
+        return Promise.resolve({
+          ok: true,
+          value: sessionChangesValue(['src/a.ts'], {
+            possible: [possibleItem('src/b.ts')],
+            commands: [commandItem('sed -i s/a/b/ src/b.ts')],
+          }),
+        })
+      }
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+  })
+  bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store.bindSession('session-1', '/Users/me/project')
+  await flush()
+
+  const line = bundle.consoleLines.find(item => item.includes('session-changes {'))
+  assert.ok(line, '要有现场')
+  assert.ok(line.includes('"files":1'), line)
+  assert.ok(line.includes('"possible":1'), line)
+  assert.ok(line.includes('"commands":1'), line)
+})
+
+/* ------------------------------------------------------ 回合级归因（第几轮改的） */
+
+/** 一份 `turnOutline` 投影快照（和宿主的形状一致）。 */
+function turnOutline(entries) {
+  return {
+    turns: entries.map(([turn, prompt]) => ({ turn, seq: turn * 10, prompt, response: '' })),
+    draft: '',
+  }
+}
+
+/** 一套假的会话服务：`binding(id).session.projections.faceOf('turnOutline')`。 */
+function fakeSessionsService(outline, options = {}) {
+  const listeners = new Set()
+  const face = {
+    getSnapshot: () => outline,
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  }
+  // 只有 `forSession`（默认 session-1）这个会话是"已物化且带投影"的；
+  // 问别的会话就返回 undefined —— 这正是"会话还没物化"的真实形态。
+  const forSession = options.forSession ?? 'session-1'
+  const session = options.materialized === false
+    ? undefined
+    : { projections: { faceOf: key => (key === 'turnOutline' ? face : undefined) } }
+  return {
+    pushed: 0,
+    setOutline(next) {
+      outline = next
+      for (const listener of listeners) listener()
+    },
+    binding: id => ({ session: id === forSession ? session : undefined }),
+    faceOf: face,
+  }
+}
+
+test('回合归因（store）：从 turnOutline 投影读回合并订阅，换会话时解绑', async () => {
+  const sessions = fakeSessionsService(turnOutline([[0, '把面板改成两栏'], [1, '加上本会话改动']]))
+  const store = realStore({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'session-changes') return Promise.resolve({ ok: true, value: sessionChangesValue(['src/a.ts']) })
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+    services: { sessions },
+  })
+  store.bindSession('session-1', '/Users/me/project')
+  await flush()
+
+  const turns = store.getSnapshot().turns
+  assert.equal(turns.available, true)
+  assert.equal(turns.latest, 1)
+  assert.equal(turns.prompts[1], '加上本会话改动')
+
+  // 投影推送新回合 → store 跟着走。
+  sessions.setOutline(turnOutline([[0, 'a'], [1, 'b'], [2, 'c']]))
+  assert.equal(store.getSnapshot().turns.latest, 2)
+  assert.equal(store.getSnapshot().turns.prompts[2], 'c')
+
+  // 换会话：旧的先解掉；换到那个"还没物化"的会话时，回合信息就该清空（不是留着上一条的）。
+  store.bindSession('session-2', '/Users/me/project')
+  assert.equal(store.getSnapshot().turns.available, false)
+})
+
+test('回合归因（store）：投影还没注册（会话没物化）时不崩，只是没有回合信息', async () => {
+  const sessions = fakeSessionsService(turnOutline([[0, 'x']]), { materialized: false })
+  const store = realStore({
+    rpc: () => Promise.resolve({ ok: true, value: statusFixture() }),
+    services: { sessions },
+  })
+  store.bindSession('session-1', '/Users/me/project')
+  await flush()
+
+  assert.equal(store.getSnapshot().turns.available, false)
+  assert.equal(store.getSnapshot().phase, 'ready', 'git 那半边照常')
+})
+
+test('回合归因（面板）：那一行报出"最近一轮 N 个"，行悬停说清是哪一轮', () => {
+  const node = renderPanel({
+    turns: { available: true, prompts: { 1: '加上本会话改动' }, latest: 1 },
+    sessionChanges: sessionSlice(['src/a.ts'], {
+      files: { 'src/a.ts': { path: 'src/a.ts', file: 'src/a.ts', writes: 1, edits: 0, firstAt: 1, lastAt: 2, lastTurn: 1 } },
+    }),
+  })
+  const line = findByAttr(node, 'session')
+  assert.ok(textOf(line).includes('session.latestTurn'), `要报最近一轮改了几个，实际 ${textOf(line)}`)
+
+  const row = findAll(node, byClass('dshh-row')).filter(item => item.props['data-row-list'] === 'changes')[0]
+  const title = String(row.props.title)
+  assert.ok(title.includes('session.turnWithPrompt'), '悬停要给出轮次')
+  assert.ok(title.includes('加上本会话改动'), '并带上那一轮的请求预览')
+})
+
+test('回合归因（面板）：投影里没有那一轮的 prompt 时只说"第 N 轮"，不编内容', () => {
+  const node = renderPanel({
+    turns: { available: true, prompts: {}, latest: 3 },
+    sessionChanges: sessionSlice(['src/a.ts'], {
+      files: { 'src/a.ts': { path: 'src/a.ts', file: 'src/a.ts', writes: 1, edits: 0, firstAt: 1, lastAt: 2, lastTurn: 3 } },
+    }),
+  })
+  const row = findAll(node, byClass('dshh-row')).filter(item => item.props['data-row-list'] === 'changes')[0]
+  assert.ok(String(row.props.title).includes('session.turn'), '有轮次')
+  assert.ok(!String(row.props.title).includes('turnWithPrompt'), '没有 prompt 就不该出现带 prompt 的文案')
+})
+
+test('回合归因（面板）：第二枚开关只在拿得到回合时出现', () => {
+  const withTurns = renderPanel({
+    turns: { available: true, prompts: {}, latest: 1 },
+    sessionChanges: sessionSlice(['src/a.ts'], {
+      files: { 'src/a.ts': { path: 'src/a.ts', file: 'src/a.ts', writes: 1, edits: 0, firstAt: 1, lastAt: 2, lastTurn: 1 } },
+    }),
+  })
+  const toggles = findAll(withTurns, item => item.props?.['data-session-filter'])
+  assert.deepEqual(toggles.map(item => item.props['data-session-filter']), ['only', 'sidebar', 'latest'])
+
+  // 拿不到回合：整枚不画（不给一个按不动的按钮）。
+  const withoutTurns = renderPanel({ sessionChanges: sessionSlice(['src/a.ts']) })
+  assert.deepEqual(findAll(withoutTurns, item => item.props?.['data-session-filter']).map(item => item.props['data-session-filter']), ['only', 'sidebar'])
+})
+
+test('回合归因（面板）：点"只看最近一轮"就走 store', () => {
+  const toggled = []
+  const node = renderPanel(
+    {
+      turns: { available: true, prompts: {}, latest: 1 },
+      sessionChanges: sessionSlice(['src/a.ts'], {
+        files: { 'src/a.ts': { path: 'src/a.ts', file: 'src/a.ts', writes: 1, edits: 0, firstAt: 1, lastAt: 2, lastTurn: 1 } },
+      }),
+    },
+    { methods: { toggleOnlyLatest: () => toggled.push(true) } },
+  )
+  findAll(node, item => item.props?.['data-session-filter'] === 'latest')[0].props.onClick()
+  assert.deepEqual(toggled, [true])
+})
+
+test('回合归因（面板）：「只看最近一轮」只留这一轮改的，并与本会话过滤叠加', () => {
+  const state = {
+    turns: { available: true, prompts: {}, latest: 1 },
+    onlyLatest: true,
+    sessionChanges: sessionSlice(['src/a.ts', 'new file.txt'], {
+      files: {
+        'src/a.ts': { path: 'src/a.ts', file: 'src/a.ts', writes: 1, edits: 0, firstAt: 1, lastAt: 2, lastTurn: 0 },
+        'new file.txt': { path: 'new file.txt', file: 'new file.txt', writes: 1, edits: 0, firstAt: 1, lastAt: 2, lastTurn: 1 },
+      },
+    }),
+  }
+  const rows = findAll(renderPanel(state), byClass('dshh-row')).filter(item => item.props['data-row-list'] === 'changes')
+  assert.deepEqual(rows.map(row => textOf(row).includes('new file.txt')), [true], `只该留最近一轮那条，实际 ${rows.length} 行`)
+
+  // 叠加「只看本会话改的」：同一条仍在（它两档都满足）。
+  const both = findAll(renderPanel({ ...state, onlySession: true }), byClass('dshh-row')).filter(item => item.props['data-row-list'] === 'changes')
+  assert.equal(both.length, 1)
+})
+
+/* --------------------------------------------------------------- 审阅进度 */
+
+/** 一份带签名的 status（`review` 是"这一版"的签名表）。 */
+function reviewStatus(signatures, overrides = {}) {
+  const base = statusFixture(overrides)
+  return { ...base, review: signatures }
+}
+
+/** 已审存档键（与实现里的键一致）。 */
+const REVIEWED_KEY = 'dsh-hud.reviewed.v1'
+/** 存档键的分隔符：与实现一样用 NUL（不写字面量转义，免得源码里是两个反斜杠都看不出来）。 */
+const REVIEW_SEP = String.fromCharCode(0)
+function reviewKey(cwd, file) {
+  return cwd + REVIEW_SEP + file
+}
+
+test('审阅进度（标记）：点行尾的 ○ 就标成已审，存进自己的键里（不跟界面开关混）', () => {
+  const bundle = mountClient({ rpc: () => Promise.resolve({ ok: true, value: statusFixture() }) })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+
+  store.bindSession('session-1', '/Users/me/project')
+  store.setReviewForTest?.()
+  // 直接把签名喂进快照（真实路径由 status 请求带回来，store 测试里单列）。
+  store.refresh()
+  store.toggleReviewed('src/a.ts')
+  const saved = JSON.parse(bundle.windowStub.localStorage.values.get(REVIEWED_KEY) ?? '{}')
+  assert.deepEqual(Object.keys(saved), [], '没有签名就不能标记 —— 标了也算不出"还是不是这一版"')
+})
+
+test('审阅进度（标记）：有签名时按签名落盘，再点一次取消', () => {
+  const signatures = { 'src/a.ts': '10.1700000000000' }
+  const bundle = mountClient({
+    rpc: (channel, endpoint) => Promise.resolve({ ok: true, value: endpoint === 'status' ? reviewStatus(signatures) : statusFixture() }),
+  })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  store.bindSession('session-1', '/Users/me/project')
+  return flush().then(() => {
+    store.toggleReviewed('src/a.ts')
+    const saved = JSON.parse(bundle.windowStub.localStorage.values.get(REVIEWED_KEY) ?? '{}')
+    const mark = saved[reviewKey('/Users/me/project', 'src/a.ts')]
+    assert.deepEqual(Object.keys(saved), [reviewKey('/Users/me/project', 'src/a.ts')])
+    assert.equal(mark.signature, '10.1700000000000', '存档里记的就是当前这一版的签名')
+    assert.equal(typeof mark.at, 'number')
+    assert.equal(store.getSnapshot().reviewed[reviewKey('/Users/me/project', 'src/a.ts')].signature, '10.1700000000000')
+
+    // 再点一次：取消（同一个签名 = 同一次点击的开关语义）。
+    store.toggleReviewed('src/a.ts')
+    assert.deepEqual(Object.keys(store.getSnapshot().reviewed), [])
+    assert.equal(bundle.windowStub.localStorage.values.get(REVIEWED_KEY), '{}')
+  })
+})
+
+test('审阅进度（失效）：改动一落盘（签名变了）标记就降级成"需要重看"，不再算已审', async () => {
+  let signatures = { 'src/a.ts': '10.1', 'new file.txt': '20.2' }
+  const bundle = mountClient({
+    rpc: (channel, endpoint) => Promise.resolve({ ok: true, value: endpoint === 'status' ? reviewStatus(signatures) : statusFixture() }),
+  })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  store.bindSession('session-1', '/Users/me/project')
+  await flush()
+
+  store.toggleReviewed('src/a.ts')
+  assert.equal(store.getSnapshot().reviewed[reviewKey('/Users/me/project', 'src/a.ts')].signature, '10.1')
+
+  // 又改了一次 → 签名变了 → 那条标记变 stale（仍在存档里，但不再算"已审"）。
+  signatures = { 'src/a.ts': '12.9', 'new file.txt': '20.2' }
+  store.refresh()
+  await flush()
+
+  // 审阅进度只在面板打开时存在（签名也是那时才要的）：渲染快照时把面板打开。
+  const node = renderPanel({ ...store.getSnapshot(), panelOpen: true })
+  const marks = findAll(node, item => item.props?.['data-review'])
+  assert.deepEqual(marks.map(mark => [mark.props['data-review'], textOf(mark)]), [
+    ['stale', '✓'],
+    ['none', '○'],
+  ], '签名变了要降级成 stale，而不是继续显示已审')
+  assert.ok(textOf(findByAttr(node, 'session')).includes('review.staleCount'), '行上要提一句"改动已变"')
+})
+
+test('审阅进度（清空）：只清当前工作区，别的仓库的标记不动', async () => {
+  const signatures = { 'src/a.ts': '10.1' }
+  const bundle = mountClient({
+    rpc: (channel, endpoint) => Promise.resolve({ ok: true, value: endpoint === 'status' ? reviewStatus(signatures) : statusFixture() }),
+  })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+
+  // 在第一个工作区标一条。
+  store.bindSession('session-1', '/Users/me/project')
+  await flush()
+  store.toggleReviewed('src/a.ts')
+
+  // 换到另一个工作区再标一条（键里带 cwd，所以是两份互不相干的记录）。
+  store.bindSession('session-2', '/Users/me/other')
+  await flush()
+  store.toggleReviewed('src/a.ts')
+
+  const before = Object.keys(JSON.parse(bundle.windowStub.localStorage.values.get(REVIEWED_KEY)))
+  assert.equal(before.length, 2, `两个工作区各一条，实际 ${JSON.stringify(before)}`)
+
+  // 在第二个工作区里清空：只该清掉它自己那条。
+  store.clearReviewed()
+  const after = Object.keys(JSON.parse(bundle.windowStub.localStorage.values.get(REVIEWED_KEY)))
+  assert.deepEqual(after, [reviewKey('/Users/me/project', 'src/a.ts')], '只该清掉当前工作区那条')
+})
+
+test('审阅进度（渲染）：行尾标记 + 那一行的"已审 n/总数"', () => {
+  const node = renderPanel({
+    status: statusFixture(),
+    review: { 'src/a.ts': '1.1', 'new file.txt': '2.2' },
+    reviewed: { [reviewKey('/Users/me/project', 'src/a.ts')]: { signature: '1.1', at: 1 } },
+  })
+  const rows = findAll(node, byClass('dshh-row')).filter(item => item.props['data-row-list'] === 'changes')
+  const cells = findAll(node, item => item.props?.['data-review'])
+  assert.deepEqual(cells.map(cell => [cell.props['data-review'], textOf(cell)]), [['fresh', '✓'], ['none', '○']])
+  assert.ok(textOf(findByAttr(node, 'session')).includes('review.count'), '行上要报"已审 n/总数"')
+  assert.equal(rows.length, 2, '行的结构没被行尾标记改坏')
+})
+
+test('审阅进度（渲染）：这次没要签名（胶囊那一路）就整列不画、也不报进度', () => {
+  const node = renderPanel({ status: statusFixture(), review: {} })
+  assert.deepEqual(findAll(node, item => item.props?.['data-review']), [])
+  assert.ok(!textOf(findByAttr(node, 'session')).includes('review.count'), '没有签名就不该报进度')
+})
+
+test('审阅进度（键盘）：v 标记当前聚焦的那一行', () => {
+  const marked = []
+  const { bundle, calls } = mountArmedPanel(
+    { cursor: 'src/a.ts', status: reviewStatus({ 'src/a.ts': '1.1', 'new file.txt': '2.2' }) },
+    { methods: { toggleReviewed: file => marked.push(file) } },
+  )
+  const keydown = bundle.listeners.get('keydown')?.[0]?.listener
+  const event = keyEvent('v')
+  keydown(event)
+
+  assert.deepEqual(marked, ['src/a.ts'], 'v 作用于光标所在那一行')
+  assert.equal(event.prevented, true, '认领的键要阻止默认行为')
+  assert.deepEqual(calls.stepFile, [], 'v 不该顺手移行')
+})
+
+/* --------------------------------------------- 侧栏行内状态 chip（会话一览） */
+
+/** 一份会话一览的响应。 */
+function overviewValue(sessions, overrides = {}) {
+  return { sessions, unavailable: false, truncated: false, worktrees: sessions.length, ...overrides }
+}
+
+/** 一行摘要：`mine`/`possible` 是这个会话自己的改动数（与 git 无关）。 */
+function overviewRow(sessionId, overrides = {}) {
+  return {
+    sessionId,
+    cwd: '/Users/me/project',
+    repo: true,
+    branch: 'main',
+    detached: false,
+    dirty: true,
+    ahead: 1,
+    behind: 0,
+    counts: { modified: 2, added: 1, deleted: 0, renamed: 0, copied: 0, typeChanged: 0, untracked: 1, conflicted: 0 },
+    mine: 3,
+    possible: 1,
+    error: null,
+    ...overrides,
+  }
+}
+
+/** 渲染侧栏行内 chip（座位 props 只有 sessionId / displayTitle）。 */
+function renderRowChip(state = {}, options = {}) {
+  // 座位 props 只有 `sessionId` / `displayTitle`（产品就是这么传的）——所以两者分开传：
+  // 第 3 个参数是快照，第 4 个才是 props。
+  return renderSeat('dsh-hud-session-status', {
+    phase: 'ready',
+    cwd: '/Users/me/project',
+    status: statusFixture(),
+    sidebarMode: 'hover',
+    rows: { phase: 'ready', byId: {}, unavailable: false, truncated: false, updatedAt: 1 },
+  }, state, { sessionId: 'session-1', displayTitle: '会话', ...options })
+}
+
+test('侧栏 chip：只有"图标级"宽度 —— 脏标记 + 改动总数 + 本会话改动数', () => {
+  const node = renderRowChip({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1') }, unavailable: false, truncated: false } })
+  const chip = findByAttr(node, 'row-chip')
+  assert.ok(chip, '脏且本会话有改动时要有 chip')
+  const text = textOf(chip)
+  // 那一行只有 32px 高、动作条很窄：只放能立刻下判断的三样，明细退到悬停。
+  assert.ok(text.startsWith('!4'), `脏 + 改动总数（2+1+1=4），实际 ${text}`)
+  assert.ok(text.includes('●3'), `本会话改过几个，实际 ${text}`)
+  assert.ok(!text.includes('M2'), `分类型简写符不进 chip（会被挤掉），实际 ${text}`)
+  assert.ok(String(chip.props.title).includes('count.modified 2'), '明细在悬停里')
+  assert.equal(chip.props['data-dsh-hud'], 'row-chip', '要带自己的标记，别碰产品的类名')
+})
+
+test('侧栏 chip：干净且本会话没改过就整枚不画（不占位置、不制造噪音）', () => {
+  const clean = overviewRow('session-1', {
+    dirty: false,
+    counts: { modified: 0, added: 0, deleted: 0, renamed: 0, copied: 0, typeChanged: 0, untracked: 0, conflicted: 0 },
+    mine: 0,
+    possible: 0,
+  })
+  const node = renderRowChip({ rows: { phase: 'ready', byId: { 'session-1': clean }, unavailable: false, truncated: false } })
+  assert.equal(findByAttr(node, 'row-chip'), null)
+})
+
+test('侧栏 chip：只有本会话改动（工作区干净）时也要画 —— 这是别的插件没有的那半信息', () => {
+  const noRepo = overviewRow('session-1', { repo: false, counts: null, mine: 2, possible: 0 })
+  const node = renderRowChip({ rows: { phase: 'ready', byId: { 'session-1': noRepo }, unavailable: false, truncated: false } })
+  const chip = findByAttr(node, 'row-chip')
+  assert.ok(chip, '非仓库但本会话改过文件 → 仍然要显示')
+  assert.ok(textOf(chip).includes('●2'))
+  assert.ok(String(chip.props.title).includes('rows.noRepo'), '悬停要说清它不在仓库里')
+})
+
+test('侧栏 chip：悬停给出分支、上游位置、各类计数与这个会话自己的改动', () => {
+  const node = renderRowChip({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1') }, unavailable: false, truncated: false } })
+  const title = String(findByAttr(node, 'row-chip').props.title)
+  assert.ok(title.includes('main*'), `要有分支与脏标记，实际 ${title}`)
+  assert.ok(title.includes('↑1'), '要有领先数')
+  assert.ok(title.includes('count.modified 2'), '要有分类型计数')
+  assert.ok(title.includes('session.pill'), '要有"本会话改过几个"')
+  assert.ok(title.includes('rows.possible'), '要有"可能相关"那条')
+  assert.ok(title.includes('/Users/me/project'), '要有工作区路径')
+})
+
+test('侧栏 chip：宿主不认这个端点时整片不画（不是画一排"读取失败"）', async () => {
+  const bundle = mountClient({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+  })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  await store.refreshRows()
+
+  const state = store.getSnapshot()
+  assert.equal(state.rows.unavailable, true)
+  assert.deepEqual(state.rows.byId, {})
+  const line = bundle.consoleLines.find(item => item.includes('session-statuses-failed'))
+  assert.ok(line && line.includes('unknown-endpoint'), '要留一行现场')
+})
+
+test('侧栏 chip（store）：一次批量取回并按 sessionId 索引，换会话不用重取', async () => {
+  const calls = []
+  const bundle = mountClient({
+    rpc: (channel, endpoint) => {
+      calls.push(endpoint)
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'session-statuses') {
+        return Promise.resolve({ ok: true, value: overviewValue([overviewRow('session-1'), overviewRow('session-2', { mine: 0 })]) })
+      }
+      return Promise.resolve({ ok: true, value: statusFixture() })
+    },
+  })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  // 并发调用要合并成一次（定时器与手动刷新同时来的时候不该打两次）。
+  await Promise.all([store.refreshRows(), store.refreshRows()])
+  assert.equal(calls.filter(endpoint => endpoint === 'session-statuses').length, 1, '在途调用要合并（批量一次就够）')
+
+  // 之后再来一次是新的请求（数据要能更新）。
+  await store.refreshRows()
+  assert.equal(calls.filter(endpoint => endpoint === 'session-statuses').length, 2)
+  const rows = store.getSnapshot().rows
+  assert.deepEqual(Object.keys(rows.byId).sort(), ['session-1', 'session-2'])
+  assert.equal(rows.byId['session-1'].mine, 3)
+})
+
+test('侧栏 chip：定时器会按自己的节奏刷新（12s，页面隐藏时跳过）', () => {
+  const { intervals, labels } = mountClient()
+  assert.ok(labels.includes('dsh-hud: session rows poll'))
+  const rowsTimer = intervals.find(item => item.ms === 12000)
+  assert.ok(rowsTimer, '要有侧栏摘要的定时器')
+})
+
+test('侧栏悬停详情：分支/上游/计数/本会话改动都在，干净且没改过就整块不画', () => {
+  const shown = renderSeat('dsh-hud-session-hover', {
+    phase: 'ready',
+    cwd: '/Users/me/project',
+    status: statusFixture(),
+    rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1') }, unavailable: false, truncated: false },
+  }, {}, { sessionId: 'session-1' })
+  const block = findByAttr(shown, 'row-hover')
+  assert.ok(block, '有内容时要画')
+  const text = textOf(block)
+  assert.ok(text.includes('main*'), `要给出分支与脏标记，实际 ${text}`)
+  assert.ok(text.includes('↑1'), '要有领先数')
+  assert.ok(text.includes('count.modified 2'), '要有分类型计数')
+  assert.ok(text.includes('session.pill'), '要有"本会话改过几个"')
+  assert.ok(text.includes('rows.possible'), '要有"可能相关"那条')
+
+  const clean = overviewRow('session-1', {
+    dirty: false,
+    counts: { modified: 0, added: 0, deleted: 0, renamed: 0, copied: 0, typeChanged: 0, untracked: 0, conflicted: 0 },
+    mine: 0,
+    possible: 0,
+  })
+  const hidden = renderSeat('dsh-hud-session-hover', {
+    phase: 'ready',
+    cwd: '/Users/me/project',
+    status: statusFixture(),
+    rows: { phase: 'ready', byId: { 'session-1': clean }, unavailable: false, truncated: false },
+  }, {}, { sessionId: 'session-1' })
+  assert.equal(findByAttr(hidden, 'row-hover'), null, '没内容就整块不画，别在卡片里留空行')
+})
+
+/* ------------------------------------------- 侧栏状态的三档（常亮 / 悬停 / 关） */
+
+/** 渲染行首那枚常亮标记。 */
+function renderLeadingToken(state = {}, options = {}) {
+  return renderSeat('dsh-hud-session-leading', {
+    phase: 'ready',
+    cwd: '/Users/me/project',
+    status: statusFixture(),
+    sidebarMode: 'always',
+    rows: { phase: 'ready', byId: {}, unavailable: false, truncated: false, updatedAt: 1 },
+  }, state, { sessionId: 'session-1', ...options })
+}
+
+test('侧栏档位（store）：默认常亮，点一下按 常亮 → 悬停 → 关 循环并落盘', async () => {
+  const bundle = mountClient({ rpc: () => Promise.resolve({ ok: true, value: statusFixture() }) })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+
+  assert.equal(store.getSnapshot().sidebarMode, 'always', '默认常亮 —— "哪个会话脏了"本来就该扫一眼看到')
+  store.cycleSidebarMode()
+  assert.equal(store.getSnapshot().sidebarMode, 'hover')
+  store.cycleSidebarMode()
+  assert.equal(store.getSnapshot().sidebarMode, 'off')
+  store.cycleSidebarMode()
+  assert.equal(store.getSnapshot().sidebarMode, 'always', '循环回来')
+
+  const saved = JSON.parse(bundle.windowStub.localStorage.values.get('dsh-hud.ui.v1'))
+  assert.equal(saved.sidebarMode, 'always')
+})
+
+test('侧栏档位（store）：存档里的怪值一律退回常亮（不因为一个坏值就不显示）', () => {
+  const bundle = mountClient({ rpc: () => Promise.resolve({ ok: true, value: statusFixture() }) })
+  bundle.windowStub.localStorage.values.set('dsh-hud.ui.v1', JSON.stringify({ sidebarMode: 'wat' }))
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  assert.equal(store.getSnapshot().sidebarMode, 'always')
+})
+
+test('常亮标记：优先报"本会话改过几个"，其次"可能相关"，再次"这个工作区脏"', () => {
+  const withMine = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { mine: 3, possible: 2 }) }, unavailable: false, truncated: false } })
+  const token = findByAttr(withMine, 'row-token')
+  assert.ok(token, '常亮档要有标记')
+  assert.equal(textOf(token), '●3', '本会话改动优先于其它事实')
+  assert.equal(token.props['data-dsh-hud'], 'row-token')
+
+  const onlyPossible = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { mine: 0, possible: 2 }) }, unavailable: false, truncated: false } })
+  assert.equal(textOf(findByAttr(onlyPossible, 'row-token')), '◐2')
+
+  const onlyDirty = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { mine: 0, possible: 0 }) }, unavailable: false, truncated: false } })
+  assert.equal(textOf(findByAttr(onlyDirty, 'row-token')), '!4', '没有本会话改动时报"脏 + 改动总数"')
+})
+
+test('常亮标记：两位数收成 `+`（行首那格只有 16px），干净且没改过整枚不画', () => {
+  const many = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { mine: 12 }) }, unavailable: false, truncated: false } })
+  assert.equal(textOf(findByAttr(many, 'row-token')), '●+', '两位数收成 +，不把标题挤走')
+
+  const clean = overviewRow('session-1', {
+    dirty: false,
+    counts: { modified: 0, added: 0, deleted: 0, renamed: 0, copied: 0, typeChanged: 0, untracked: 0, conflicted: 0 },
+    mine: 0,
+    possible: 0,
+  })
+  const node = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': clean }, unavailable: false, truncated: false } })
+  assert.equal(findByAttr(node, 'row-token'), null)
+})
+
+test('三档：常亮只在行首画、悬停只在动条画、关了一处都不画', () => {
+  const rows = { phase: 'ready', byId: { 'session-1': overviewRow('session-1') }, unavailable: false, truncated: false }
+
+  // 常亮档：行首有，动条那枚没有。
+  const always = { rows, sidebarMode: 'always' }
+  assert.ok(findByAttr(renderLeadingToken(always), 'row-token'), '常亮档画行首标记')
+  assert.equal(findByAttr(renderRowChip(always), 'row-chip'), null, '常亮档不在动条上重复画')
+
+  // 悬停档：动条有，行首没有。
+  const hover = { rows, sidebarMode: 'hover' }
+  assert.equal(findByAttr(renderLeadingToken(hover), 'row-token'), null, '悬停档不占行首那格')
+  assert.ok(findByAttr(renderRowChip(hover), 'row-chip'), '悬停档画动条那枚')
+
+  // 关：两处都不画。
+  const off = { rows, sidebarMode: 'off' }
+  assert.equal(findByAttr(renderLeadingToken(off), 'row-token'), null)
+  assert.equal(findByAttr(renderRowChip(off), 'row-chip'), null)
+})
+
+test('三档：关掉时悬停卡片里那块详情也一起撤（"不显示"就是一处都不显示）', () => {
+  const rows = { phase: 'ready', byId: { 'session-1': overviewRow('session-1') }, unavailable: false, truncated: false }
+  const shown = renderSeat('dsh-hud-session-hover', { phase: 'ready', cwd: '/Users/me/project', status: statusFixture(), sidebarMode: 'always', rows }, {}, { sessionId: 'session-1' })
+  assert.ok(findByAttr(shown, 'row-hover'), '常亮/悬停档：卡片里有详情')
+
+  const hidden = renderSeat('dsh-hud-session-hover', { phase: 'ready', cwd: '/Users/me/project', status: statusFixture(), sidebarMode: 'off', rows }, {}, { sessionId: 'session-1' })
+  assert.equal(findByAttr(hidden, 'row-hover'), null, '关掉后卡片里也不留')
+})
+
+test('侧栏档位（面板）：那一行有一枚开关显示当前档位，点一下走 store', () => {
+  const cycled = []
+  const node = renderPanel(
+    { sidebarMode: 'hover' },
+    { methods: { cycleSidebarMode: () => cycled.push(true) } },
+  )
+  const toggle = findAll(node, item => item.props?.['data-session-filter'] === 'sidebar')[0]
+  assert.ok(toggle, '面板上要有档位开关')
+  assert.equal(toggle.props['data-sidebar-mode'], 'hover', '显示当前档位')
+  assert.ok(String(toggle.props.title).includes('rows.modeTitle'), '悬停说清这三档怎么循环')
+  toggle.props.onClick()
+  assert.deepEqual(cycled, [true])
+})
+
+/* ------------------------------------------ ⋯ 菜单里的只读摘要（B 方案） */
+
+/** 渲染 ⋯ 菜单里那条摘要。 */
+function renderMenuSummary(state = {}, options = {}) {
+  return renderSeat('dsh-hud-session-menu', {
+    phase: 'ready',
+    cwd: '/Users/me/project',
+    status: statusFixture(),
+    sidebarMode: 'always',
+    rows: { phase: 'ready', byId: {}, unavailable: false, truncated: false, updatedAt: 1 },
+  }, state, { sessionId: 'session-1', displayTitle: '会话', ...options })
+}
+
+test('⋯ 菜单摘要：两行说清"工作区怎么了"与"本会话改了什么"', () => {
+  const node = renderMenuSummary({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1') }, unavailable: false, truncated: false } })
+  const readout = findByAttr(node, 'menu-readout')
+  assert.ok(readout, '菜单里要有这条摘要')
+  const text = textOf(readout)
+  assert.ok(text.includes('main*'), `第一行是工作区：分支 + 脏标记，实际 ${text}`)
+  assert.ok(text.includes('count.modified 2'), '第一行带上分类型计数')
+  assert.ok(text.includes('session.pill'), '第二行是"本会话改过几个"')
+  assert.ok(text.includes('rows.possible'), '第二行带上"可能相关"')
+  assert.equal(String(readout.props.title), '/Users/me/project', '悬停给出工作区路径')
+})
+
+test('⋯ 菜单摘要：干净且本会话没改过时，明说"干净"与"没有改动记录"，而不是消失', () => {
+  const clean = overviewRow('session-1', {
+    dirty: false,
+    counts: { modified: 0, added: 0, deleted: 0, renamed: 0, copied: 0, typeChanged: 0, untracked: 0, conflicted: 0 },
+    mine: 0,
+    possible: 0,
+  })
+  const node = renderMenuSummary({ rows: { phase: 'ready', byId: { 'session-1': clean }, unavailable: false, truncated: false } })
+  const readout = findByAttr(node, 'menu-readout')
+  assert.ok(readout, '干净时也要在（"这里没有东西"本身是信息，消失会让人以为功能没做）')
+  assert.ok(textOf(readout).includes('panel.clean'))
+  assert.ok(textOf(readout).includes('rows.ownNone'))
+})
+
+test('⋯ 菜单摘要：受档位控制（关掉就不显示），没有数据也不画', () => {
+  const rows = { phase: 'ready', byId: { 'session-1': overviewRow('session-1') }, unavailable: false, truncated: false }
+  assert.ok(findByAttr(renderMenuSummary({ rows, sidebarMode: 'off' }), 'menu-readout') === null, '关档时菜单里也不显示')
+  assert.ok(findByAttr(renderMenuSummary({ rows, sidebarMode: 'hover' }), 'menu-readout'), '悬停档也要显示')
+  assert.equal(findByAttr(renderMenuSummary({ rows: { phase: 'ready', byId: {}, unavailable: false, truncated: false } }), 'menu-readout'), null, '没有这个会话的数据时整条不画')
+})
+
+test('⋯ 菜单摘要：非仓库目录也能用（本会话改动与 git 无关）', () => {
+  const node = renderMenuSummary({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { repo: false, counts: null, mine: 2 }) }, unavailable: false, truncated: false } })
+  const text = textOf(findByAttr(node, 'menu-readout'))
+  assert.ok(text.includes('rows.noRepo'), '说清不在仓库里')
+  assert.ok(text.includes('session.pill'), '本会话改动照报')
 })

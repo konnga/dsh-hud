@@ -8,16 +8,40 @@ import { CHANNEL, apply } from '../lib/index.js'
 export function mount(options = {}) {
   const routes = []
   const labels = []
+  /** 事件名 → 监听器：宿主半会旁听 `fs/*` 事件做会话归因，测试要用 emit 驱动它。 */
+  const listeners = new Map()
   const connection = {
     requestRejection: options.requestRejection ?? (() => undefined),
   }
+  const cleanups = []
   const ctx = {
     effect(fn, label) {
       labels.push(label)
-      return fn()
+      const cleanup = fn()
+      if (typeof cleanup === 'function') cleanups.push(cleanup)
+      return cleanup
     },
     get(name) {
       return name === 'connection' ? connection : undefined
+    },
+    // 动态注入：真实 Cordis 里 `ctx.inject(deps, cb)` 起一个带 inject 的子 fiber ——
+    // 全部依赖到齐才回调，缺一个就永远不回调。宿主半的软依赖（例如 `sessionProjections`）
+    // 就是靠这个语义"有则用、无则不算"。
+    inject(deps, callback) {
+      const provided = options.services ?? {}
+      if (deps.some(name => provided[name] === undefined)) return () => {}
+      const dispose = callback({ ...provided, effect: fn => fn() })
+      return () => {
+        if (typeof dispose === 'function') dispose()
+      }
+    },
+    on(event, listener) {
+      const list = listeners.get(event) ?? []
+      list.push(listener)
+      listeners.set(event, list)
+      return () => {
+        listeners.set(event, (listeners.get(event) ?? []).filter(item => item !== listener))
+      }
     },
     webServer: {
       register(route) {
@@ -27,7 +51,19 @@ export function mount(options = {}) {
     },
   }
   apply(ctx)
-  return { ctx, routes, labels, connection, handler: routes[0].handler }
+  return {
+    ctx,
+    routes,
+    labels,
+    connection,
+    handler: routes[0].handler,
+    listeners,
+    cleanups,
+    /** 触发某个事件上的全部监听（模拟宿主侧派发）。 */
+    emit(event, ...args) {
+      for (const listener of listeners.get(event) ?? []) listener(...args)
+    },
+  }
 }
 
 export function fakeRequest({ method = 'POST', url = `${CHANNEL}/status`, headers = {}, body = undefined } = {}) {
