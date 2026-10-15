@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -132,4 +132,21 @@ test('工作区目录不存在时抛出 no-cwd', { skip: !HAS_GIT && 'git 不可
     () => readStatus(path.join(tmpdir(), 'dsh-hud-definitely-missing-dir')),
     (error) => error.code === 'no-cwd',
   )
+})
+
+test('未跟踪按"文件"计，不把目录折成一条（与编辑器 / git status -uall 同口径）', { skip: !HAS_GIT && 'git 不可用' }, async () => {
+  const dir = await makeRepo()
+  try {
+    await mkdir(path.join(dir, 'brandnew'), { recursive: true })
+    for (const name of ['n1.txt', 'n2.txt', 'n3.txt']) await writeFile(path.join(dir, 'brandnew', name), 'x\n')
+
+    const status = await readStatus(dir)
+    // 这条是回归：`--untracked-files=normal` 会把整个 brandnew/ 折成一条 `?`，
+    // 于是胶囊上的 `?n` 比编辑器报的数小得多（用户实测差到 1/3）。
+    assert.equal(status.counts.untracked, 3, '目录里 3 个新文件要算 3 条')
+    assert.equal(status.changes.filter(change => change.status === '?').length, 3, '清单里也是 3 条')
+  }
+  finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
