@@ -2663,7 +2663,7 @@ test('侧栏 chip：只有"图标级"宽度 —— 脏标记 + 改动总数 + �
   assert.equal(chip.props['data-dsh-hud'], 'row-chip', '要带自己的标记，别碰产品的类名')
 })
 
-test('侧栏 chip：干净且本会话没改过就整枚不画（不占位置、不制造噪音）', () => {
+test('侧栏 chip：干净时给一个 ✓（空着和"没做这个功能"长得一样）', () => {
   const clean = overviewRow('session-1', {
     dirty: false,
     counts: { modified: 0, added: 0, deleted: 0, renamed: 0, copied: 0, typeChanged: 0, untracked: 0, conflicted: 0 },
@@ -2671,7 +2671,9 @@ test('侧栏 chip：干净且本会话没改过就整枚不画（不占位置、
     possible: 0,
   })
   const node = renderRowChip({ rows: { phase: 'ready', byId: { 'session-1': clean }, unavailable: false, truncated: false } })
-  assert.equal(findByAttr(node, 'row-chip'), null)
+  const chip = findByAttr(node, 'row-chip')
+  assert.ok(chip, '干净时也要有东西 —— 常亮/悬停都不该出现"什么都没有"')
+  assert.equal(textOf(chip), '✓')
 })
 
 test('侧栏 chip：只有本会话改动（工作区干净）时也要画 —— 这是别的插件没有的那半信息', () => {
@@ -2743,7 +2745,7 @@ test('侧栏 chip：定时器会按自己的节奏刷新（12s，页面隐藏时
   assert.ok(rowsTimer, '要有侧栏摘要的定时器')
 })
 
-test('侧栏悬停详情：分支/上游/计数/本会话改动都在，干净且没改过就整块不画', () => {
+test('侧栏悬停详情：分支/上游/计数/本会话改动都在；干净时如实说"干净"而不是整块不画', () => {
   const shown = renderSeat('dsh-hud-session-hover', {
     phase: 'ready',
     cwd: '/Users/me/project',
@@ -2771,7 +2773,10 @@ test('侧栏悬停详情：分支/上游/计数/本会话改动都在，干净�
     status: statusFixture(),
     rows: { phase: 'ready', byId: { 'session-1': clean }, unavailable: false, truncated: false },
   }, {}, { sessionId: 'session-1' })
-  assert.equal(findByAttr(hidden, 'row-hover'), null, '没内容就整块不画，别在卡片里留空行')
+  const block2 = findByAttr(hidden, 'row-hover')
+  assert.ok(block2, '干净时也该有（说清"干净"本身就是信息）')
+  assert.ok(textOf(block2).includes('panel.clean'), '写明工作区干净')
+  assert.ok(textOf(block2).includes('rows.ownNone'), '写明本会话没有改动记录')
 })
 
 /* ------------------------------------------- 侧栏状态的三档（常亮 / 悬停 / 关） */
@@ -2824,7 +2829,7 @@ test('常亮标记：优先报"本会话改过几个"，其次"可能相关"，�
   assert.equal(textOf(findByAttr(onlyDirty, 'row-token')), '!4', '没有本会话改动时报"脏 + 改动总数"')
 })
 
-test('常亮标记：两位数收成 `+`（行首那格只有 16px），干净且没改过整枚不画', () => {
+test('常亮标记：两位数收成 `+`；干净 / 非仓库 / 读取失败各有标记（常亮档永远有东西）', () => {
   const many = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { mine: 12 }) }, unavailable: false, truncated: false } })
   assert.equal(textOf(findByAttr(many, 'row-token')), '●+', '两位数收成 +，不把标题挤走')
 
@@ -2834,8 +2839,18 @@ test('常亮标记：两位数收成 `+`（行首那格只有 16px），干净�
     mine: 0,
     possible: 0,
   })
-  const node = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': clean }, unavailable: false, truncated: false } })
-  assert.equal(findByAttr(node, 'row-token'), null)
+  const cleanNode = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': clean }, unavailable: false, truncated: false } })
+  assert.equal(textOf(findByAttr(cleanNode, 'row-token')), '✓', '干净 → ✓')
+
+  const noRepo = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { repo: false, counts: null, mine: 0, possible: 0 }) }, unavailable: false, truncated: false } })
+  assert.equal(textOf(findByAttr(noRepo, 'row-token')), '—', '不在仓库里 → —')
+
+  const broken = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { repo: false, counts: null, mine: 0, possible: 0, error: 'git-failed' }) }, unavailable: false, truncated: false } })
+  assert.equal(textOf(findByAttr(broken, 'row-token')), '?', '读取失败 → ?')
+
+  // 没有这个会话的数据才整枚不画（那才是真的没东西可说）。
+  const noData = renderLeadingToken({ rows: { phase: 'ready', byId: {}, unavailable: false, truncated: false } })
+  assert.equal(findByAttr(noData, 'row-token'), null)
 })
 
 test('三档：常亮只在行首画、悬停只在动条画、关了一处都不画', () => {
