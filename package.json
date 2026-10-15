@@ -1,6 +1,6 @@
 {
   "name": "@konnga/dsh-hud",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "DeepSeek Harness 的当前项目 Git 悬浮面板：分支、ahead/behind、脏状态与改动清单（只读），并告诉你这个会话改过哪些文件（按会话归因：确定改过 / 命令旁听的「可能相关」/ 与本会话无关，精确到第几轮）、审阅到哪了（已审 x/y），以及侧栏会话行的状态标记。A read-only Git HUD floating panel for DeepSeek Harness — branch, ahead/behind, dirty state, changed files — plus per-session change attribution (confirmed / command-inferred / per turn), review progress, and sidebar session status.",
   "type": "module",
   "main": "lib/index.js",
