@@ -394,7 +394,7 @@ function renderPanel(state = {}, options = {}) {
 
 test('bundle 以 dsh.client 契约注册自己', () => {
   const { registry } = loadBundle()
-  assert.equal(registry.definition.id, 'dsh-hud')
+  assert.equal(registry.definition.id, '@konnga/dsh-hud', '客户端模块 id 必须等于包名（参照插件同此约定：宿主按包名发模块并记账）')
   assert.equal(typeof registry.definition.factory, 'function')
 })
 
@@ -487,7 +487,7 @@ test('自有样式表打上 DSH 的所有权标记，且被 HMR 记账删掉后�
   const { styles, head, intervals, listeners, dispatch } = mountClient()
 
   // client-modules 靠 data-plugin 认领/清理样式：不打标就会被别的模块领走并删掉。
-  assert.equal(styles[0].attributes['data-plugin'], 'dsh-hud')
+  assert.equal(styles[0].attributes['data-plugin'], '@konnga/dsh-hud', '值 = 客户端模块 id（= 包名），客户端运行器按它回收样式')
   assert.equal(styles[0].attributes['data-plugin-css'], 'dsh-hud/styles.css', '稳定 tag id，重复注入复用同一节点')
 
   // 框架在 replace/invalidate/prune 里删掉整张表 —— 轮询周期要把它补回来。
@@ -496,7 +496,7 @@ test('自有样式表打上 DSH 的所有权标记，且被 HMR 记账删掉后�
 
   intervals[0].callback()
   assert.equal(styles.length, 1, '下一个轮询周期补回样式表')
-  assert.equal(styles[0].attributes['data-plugin'], 'dsh-hud')
+  assert.equal(styles[0].attributes['data-plugin'], '@konnga/dsh-hud', '值 = 客户端模块 id（= 包名），客户端运行器按它回收样式')
   assert.ok(styles[0].textContent.includes('.dshh-pill'), '补回的是同一张表')
 
   // 幂等：没丢的时候再补一次不新增节点。
