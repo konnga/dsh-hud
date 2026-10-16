@@ -3244,3 +3244,60 @@ test('面（store）把拖动要用的方法都暴露出来了 —— 少一个�
     assert.equal(typeof store[name], 'function', `store 面上缺 ${name}()`)
   }
 })
+
+/* ---------------------------------------------------------- 技能（skill 工具） */
+
+test('工具胶囊：技能直接铺技能名，不再显示 `skill ×n`（那样看不出是哪个技能）', () => {
+  const node = renderTools({
+    tools: toolsState({
+      counts: [{ name: 'bash', count: 12, ok: true }, { name: 'skill', count: 3, ok: true }],
+      skills: [{ name: 'office-xlsx', count: 2, ok: true }, { name: 'pdf', count: 1, ok: false }],
+      total: 15,
+    }),
+  })
+  const text = textOf(findByAttr(node, 'tools-pill'))
+  assert.ok(text.includes('bash ×12'), `工具那半照旧，实际 ${text}`)
+  assert.ok(!text.includes('skill ×3'), '`skill` 工具本身不该出现在计数里（没信息量）')
+  assert.ok(text.includes('tools.skills'), '有技能时要单独起一段')
+  assert.ok(text.includes('office-xlsx ×2') && text.includes('pdf ×1'), `技能名要铺出来，实际 ${text}`)
+  const pill = findByAttr(node, 'tools-pill')
+  assert.equal(findAll(pill, byClass('dshh-skillName')).length, 1, '技能名有自己的颜色（与工具名区分）')
+  // 最近一次失败的技能直接标红 —— 这条断言顺带钉住"谁失败谁红"，而不是整段变红。
+  assert.equal(findAll(pill, byClass('dshh-toolsGlyphBad')).length, 1, '失败的技能标红')
+})
+
+test('工具胶囊：技能多于两个收成 +k；悬停里给完整清单与成败', () => {
+  const node = renderTools({
+    tools: toolsState({
+      counts: [{ name: 'bash', count: 5, ok: true }],
+      skills: [
+        { name: 'a-skill', count: 3, ok: true },
+        { name: 'b-skill', count: 2, ok: true },
+        { name: 'c-skill', count: 1, ok: false },
+      ],
+      skillsDropped: 4,
+      total: 11,
+    }),
+  })
+  const pill = findByAttr(node, 'tools-pill')
+  const text = textOf(pill)
+  assert.ok(text.includes('a-skill ×3') && text.includes('b-skill ×2'), text)
+  assert.ok(!text.includes('c-skill'), '第三个起收起来')
+  assert.ok(text.includes('+1'), '收起来的用 +k 表示')
+
+  const title = String(pill.props.title)
+  assert.ok(title.includes('c-skill ×1 (✗)'), `悬停给完整清单并标出失败，实际 ${title}`)
+})
+
+test('工具胶囊：正在跑的时候带上参数摘要（codex-hud 的 `◐ exec_command: pnpm test`）', () => {
+  const node = renderTools({
+    tools: toolsState({
+      active: { name: 'skill', summary: 'office-xlsx', startedAt: TOOLS_NOW - 500 },
+      counts: [{ name: 'skill', count: 1, ok: null }],
+      total: 1,
+    }),
+  })
+  // flatText：harness 会在相邻子元素间插空格（DOM 里没有），拼出来的形状才算数。
+  const text = flatText(findByAttr(node, 'tools-pill'))
+  assert.ok(text.includes('skill:office-xlsx'), `要能看出正在加载哪个技能，实际 ${text}`)
+})

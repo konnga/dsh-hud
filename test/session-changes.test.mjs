@@ -657,7 +657,7 @@ test('工具活动：会话之间互不串，没有记录的会话回空壳而�
 
   assert.equal((await readTools(bundle, first)).total, 1)
   const other = await readTools(bundle, second)
-  assert.deepEqual(other, { sessionId: second, tracking: true, active: null, recent: [], counts: [], total: 0 })
+  assert.deepEqual(other, { sessionId: second, tracking: true, active: null, recent: [], counts: [], skills: [], skillsDropped: 0, total: 0 })
   const none = await readTools(bundle, null)
   assert.equal(none.sessionId, null)
 })
@@ -698,4 +698,31 @@ test('会话一览：「可能相关」同时报"记录到几个"和"其中几�
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test('技能：`skill` 工具调用会被单独记下来（能从"skill ×2"看出是哪两个技能）', async () => {
+  const session = sessionOf('tools-skills')
+  const bundle = mount()
+  toolCall(bundle, { sessionId: session, name: 'skill', callId: 's1', arguments: { name: 'office-xlsx' } })
+  toolCall(bundle, { sessionId: session, name: 'skill', callId: 's2', arguments: { name: 'office-xlsx' } })
+  toolCall(bundle, { sessionId: session, name: 'skill', callId: 's3', arguments: { name: 'pdf' }, result: { ok: false, error: { code: 'boom' } } })
+  toolCall(bundle, { sessionId: session, name: 'bash', callId: 'b1', arguments: { command: 'ls' } })
+
+  const value = await readTools(bundle, session)
+  assert.deepEqual(value.skills, [
+    { name: 'office-xlsx', count: 2, ok: true },
+    { name: 'pdf', count: 1, ok: false },
+  ], '按次数排序，并带上各技能自己最近一次的结果')
+  // 摘要也要给技能名（否则悬停里只能看到 `skill`，看不出是哪个）。
+  const byName = Object.fromEntries(value.recent.map(item => [item.summary, item]))
+  assert.ok(byName['office-xlsx'], `skill 调用的摘要应是技能名，实际 ${JSON.stringify(value.recent)}`)
+})
+
+test('技能：只有 `skill` 工具的参数才被当成技能名（别的工具的 name 不能被误认）', async () => {
+  const session = sessionOf('tools-skills-guard')
+  const bundle = mount()
+  // 另一个工具也带 name 参数：它不该出现在技能表里。
+  toolCall(bundle, { sessionId: session, name: 'some_tool', callId: 'x1', arguments: { name: 'not-a-skill' } })
+  const value = await readTools(bundle, session)
+  assert.deepEqual(value.skills, [], '只有 skill 工具的 name 才算技能名')
 })
