@@ -3232,3 +3232,15 @@ test('工作台：提交栏宽度按存档恢复，并有最小值下限', () =>
   assert.equal(wide.props.style.width, 380 + 300 + 6 + 470 + 6, '存档里的宽度要生效')
   assert.equal(findAll(wide, byClass('dshh-commitpane'))[0].props.style.width, 300, '栏自己按存档宽度渲染')
 })
+
+test('面（store）把拖动要用的方法都暴露出来了 —— 少一个，拖起来就是"没反应"', () => {
+  // 这条是给一个真实事故留的：`setCommitWidth` 在 store 里定义了、也接进了 pointermove，
+  // 但忘了挂到 store 返回的面上 → 拖动时 `store.setCommitWidth` 是 undefined → 直接抛错，
+  // 表现就是"无法拖动"。而当时的拖动用例用的是 harness 自己拼的假 store（里面有这个方法），
+  // 所以永远发现不了。这里直接检查**真 store 的面**。
+  const bundle = mountClient()
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  for (const name of ['setDiffWidth', 'setCommitWidth', 'openDiff', 'closeDetail', 'refreshRows', 'commitPanel']) {
+    assert.equal(typeof store[name], 'function', `store 面上缺 ${name}()`)
+  }
+})
