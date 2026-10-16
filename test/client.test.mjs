@@ -3258,7 +3258,8 @@ test('工具胶囊：技能直接铺技能名，不再显示 `skill ×n`（那�
   const text = textOf(findByAttr(node, 'tools-pill'))
   assert.ok(text.includes('bash ×12'), `工具那半照旧，实际 ${text}`)
   assert.ok(!text.includes('skill ×3'), '`skill` 工具本身不该出现在计数里（没信息量）')
-  assert.ok(text.includes('tools.skills'), '有技能时要单独起一段')
+  // 这里只能断言到 key —— harness 的 t() 回显 key（文案字面量另有一条词典用例钉住）。
+  assert.ok(text.includes('tools.skills office-xlsx ×2'), `技能段要标签 + 技能名，实际 ${text}`)
   assert.ok(text.includes('office-xlsx ×2') && text.includes('pdf ×1'), `技能名要铺出来，实际 ${text}`)
   const pill = findByAttr(node, 'tools-pill')
   assert.equal(findAll(pill, byClass('dshh-skillName')).length, 1, '技能名有自己的颜色（与工具名区分）')
@@ -3300,4 +3301,12 @@ test('工具胶囊：正在跑的时候带上参数摘要（codex-hud 的 `◐ e
   // flatText：harness 会在相邻子元素间插空格（DOM 里没有），拼出来的形状才算数。
   const text = flatText(findByAttr(node, 'tools-pill'))
   assert.ok(text.includes('skill:office-xlsx'), `要能看出正在加载哪个技能，实际 ${text}`)
+})
+
+
+test('词典：技能标签是字面的 `skills:`（不翻译，与 `git:(` 同一套）', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const values = [...source.matchAll(/"tools\.skills":\s*"([^"]*)"/g)].map(item => item[1])
+  // 尾空格由渲染处补（`t("tools.skills") + " "`），文案本身保持干净 —— 悬停那处本来就自己加空格。
+  assert.deepEqual(values, ['skills:', 'skills:'], `中英两份都该是 "skills:"，实际 ${JSON.stringify(values)}`)
 })
