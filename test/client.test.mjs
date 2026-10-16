@@ -209,6 +209,16 @@ function textOf(node) {
  * dock 一行里只有这一枚胶囊，但按标记取仍然更精确：会话归因那段挂在它尾部，直接
  * `textOf(座位)` 会把那些字也算进"分支摘要"的断言里。
  */
+/**
+ * 去掉 harness 插入的空格后的座位文本。
+ *
+ * `textOf()` 会把相邻子元素**用空格**连接，而 DOM 里 `git:(` + `main*` + `)` 是紧挨着的 ——
+ * 所以凡是断言胶囊结构（尤其 `git:(…)`）的地方都要用这个，否则断言的是 harness 的拼接方式。
+ */
+function flatText(node) {
+  return textOf(node).replace(/\s+/g, '');
+}
+
 function pillText(state = {}, options = {}) {
   return textOf(findByAttr(renderPill(state, options), 'pill'))
 }
@@ -512,13 +522,13 @@ test('自有样式表打上 DSH 的所有权标记，且被 HMR 记账删掉后�
 /* ------------------------------------------------------------ 渲染逻辑 */
 
 test('胶囊：脏分支带星号、领先落后，并用 codex-hud 式简写符分组展示改动', () => {
-  const text = textOf(renderPill())
+  const text = flatText(renderPill())
   assert.ok(text.includes('git:(main*)'), `期望分支摘要，实际 ${JSON.stringify(text)}`)
   assert.ok(text.includes('↑1'), '领先数')
   assert.ok(text.includes('↓2'), '落后数')
   // 简写符：M 已修改 / A 已暂存新增 / ? 未跟踪，按固定顺序。
   // 前面多了工作区名（另有专门用例钉它），这里断言分支摘要那一段。
-  assert.ok(text.endsWith('git:(main*) ↑1 ↓2 M2 A1 ?1'), `实际 ${JSON.stringify(text)}`)
+  assert.ok(text.endsWith('git:(main*)↑1↓2M2A1?1'), `实际 ${JSON.stringify(text)}`)
 })
 
 test('胶囊：简写符只列非零项，顺序固定为 M A D R C T ? !', () => {
@@ -527,7 +537,11 @@ test('胶囊：简写符只列非零项，顺序固定为 M A D R C T ? !', () =
       counts: { modified: 4, added: 0, deleted: 2, renamed: 1, copied: 0, typeChanged: 0, untracked: 3, conflicted: 1 },
     }),
   }))
-  assert.ok(text.endsWith('git:(main*) ↑1 ↓2 M4 D2 R1 ?3 !1'), `实际 ${JSON.stringify(text)}`)
+  assert.ok(flatText(renderPill({
+    status: statusFixture({
+      counts: { modified: 4, added: 0, deleted: 2, renamed: 1, copied: 0, typeChanged: 0, untracked: 3, conflicted: 1 },
+    }),
+  })).endsWith('git:(main*)↑1↓2M4D2R1?3!1'), '简写符顺序与内容')
 })
 
 test('胶囊：简写符各自上色，与面板计数同色', () => {
@@ -544,7 +558,7 @@ test('胶囊：简写符各自上色，与面板计数同色', () => {
   const byText = Object.fromEntries(marks.map(mark => [mark.text, mark.color]))
   assert.ok(byText.M2?.includes('state-warn'), `M 应为警告色，实际 ${JSON.stringify(byText)}`)
   assert.ok(byText.A1?.includes('state-success'), 'A 应为成功色')
-  assert.ok(byText['?1']?.includes('label-secondary'), '? 应为次级文字色')
+  assert.ok(byText['?1']?.includes('label-dimmed'), '? 用 dim（对齐 codex-hud 的 ?→dim）')
 })
 
 test('胶囊：悬停给出完整信息（路径、上游、各类型计数）', () => {
@@ -601,7 +615,9 @@ test('胶囊：干净仓库不带星号也不带计数', () => {
   const text = textOf(renderPill({
     status: statusFixture({ dirty: false, ahead: 0, behind: 0, counts: { modified: 0, added: 0, deleted: 0, renamed: 0, copied: 0, typeChanged: 0, untracked: 0, conflicted: 0 } }),
   }))
-  assert.ok(text.endsWith('git:(main)'), `实际 ${JSON.stringify(text)}`)
+  assert.ok(flatText(renderPill({
+    status: statusFixture({ dirty: false, ahead: 0, behind: 0, counts: { modified: 0, added: 0, deleted: 0, renamed: 0, copied: 0, typeChanged: 0, untracked: 0, conflicted: 0 } }),
+  })).endsWith('git:(main)'), '干净仓库')
 })
 
 test('胶囊：非仓库、读取中、失败三种状态各有文案', () => {
@@ -3112,10 +3128,10 @@ test('胶囊：最前面是工作区名（cwd 的目录名），与分支用 `·
 test('胶囊：工作区名过长从中间省略，不吃掉分支的位置', () => {
   const long = '/Users/me/' + 'x'.repeat(40) + '-tail'
   // 注意：胶囊的 cwd 来自 `useSessions` 快照，不是 state —— 要覆盖得走 sessionOf()。
-  const text = textOf(renderPill({}, sessionOf(long)))
+  const text = flatText(renderPill({}, sessionOf(long)))
   assert.ok(text.includes('…'), `要省略，实际 ${JSON.stringify(text)}`)
-  assert.ok(text.endsWith('git:(main*) ↑1 ↓2 M2 A1 ?1'), '分支摘要必须完整')
-  const name = text.slice(0, text.indexOf(' · '))
+  assert.ok(text.endsWith('git:(main*)↑1↓2M2A1?1'), '分支摘要必须完整（去空格后比）')
+  const name = text.slice(0, text.indexOf('·'))   // flatText 后分隔符两侧的空格也去掉了
   assert.ok(name.length <= 20, `工作区名不该超过 20 字符，实际 ${name.length}`)
 })
 
@@ -3159,4 +3175,21 @@ test('工具胶囊配色：对齐 codex-hud —— 只有状态符上色，名�
   assert.equal(findAll(idlePill, byClass('dshh-toolsGlyphBad')).length, 1, '失败的 ✗ 用错误色')
   assert.equal(findAll(idlePill, byClass('dshh-toolsName')).length, 0, '空闲时名字不上色（codex 也是默认色）')
   assert.equal(findAll(idlePill, byClass('dshh-toolsDim')).length, 0, '次数不该被淡化 —— 这是原来的偏离')
+})
+
+test('git 胶囊配色：对齐 codex-hud 的 gitSegment（git:( 品红、分支与 ↑↓ 青、? 用 dim）', () => {
+  // codex-hud 的默认配色表：git: 'magenta'、gitBranch: 'cyan'、project: 'yellow'；
+  // 简写符另有各自一色（R→cyan、T→magenta、?→dim，M/A/D/! 本来就是 yellow/green/red/critical）。
+  const node = renderPill()
+  assert.equal(findAll(node, byClass('dshh-gitWrap')).length, 2, 'git:( 与 ) 各一个，用品红')
+  assert.equal(findAll(node, byClass('dshh-branch')).length, 1, '分支名（含 *）用青')
+  assert.equal(findAll(node, byClass('dshh-ahead')).length, 2, '↑1 ↓2 各一个，同分支那支青')
+
+  // 样式表里那几支颜色要真的存在（写死值也走变量，可覆盖）。
+  const css = stylesheetText()
+  for (const rule of ['.dshh-gitWrap', '.dshh-branch', '.dshh-ahead', '.dshh-workspace', '.dshh-toolsName']) {
+    assert.ok(css.includes(rule), `${rule} 规则要在样式表里`)
+  }
+  assert.ok(/\.dshh-gitWrap\{[^}]*--dsh-hud-magenta/.test(css), 'git:( 用品红变量')
+  assert.ok(/\.dshh-branch\{[^}]*--dsh-hud-cyan/.test(css), '分支用青变量')
 })
