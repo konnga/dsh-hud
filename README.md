@@ -116,7 +116,9 @@ node --test test/diff.test.mjs    # 单个文件
 - `lib/client.js`：浏览器半（**无构建步骤**，手写 JS，只依赖种子模块 `react`）。
 - `test/`：单测 + 一套假 window/document/React harness。
 - `docs/dock-slot-host.md`：把输入框上方那一行做成「可注册行内宿主」的提案（给上游看的）。
-- 发布：`npm publish` 会先跑全部测试（`prepublishOnly`）。
+- **发版**：`npm run tag && npm publish`。
+  `prepublishOnly` 会先跑全部测试，再校验**版本号 ↔ git tag**：工作区必须干净、`v<版本>` 必须存在、且必须指向 HEAD —— 对不上就发不出去（打过 tag 后又提交了新东西，也会在这里被拦住）。急事可 `DSH_HUD_SKIP_TAG_CHECK=1` 跳过，会打印警告。
+  为什么是硬校验：0.7.0 / 0.7.1 的版本号是手改 `package.json` 发的（`npm version` 才会顺带建 tag），结果仓库里一个 tag 都没有，事后只能靠比对文件 sha 才能确定"当时发的到底是哪份代码"。
 
 ## 许可
 
