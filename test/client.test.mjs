@@ -1065,7 +1065,7 @@ const COMMITS = [
   { sha: '1097168', author: 'wjc', date: '2026-10-14', committedAt: Date.now() - 7200 * 1000, refs: [], subject: 'fix: 胶囊与输入卡片左对齐' },
 ]
 
-test('最近提交：一行一条，带短 sha、标题、HEAD 徽标与相对时间', () => {
+test('最近提交：一行一条，带短 sha、标题、HEAD 徽标与具体时刻', () => {
   const node = renderPanel({ commits: COMMITS })
   const rows = findAll(node, byClass('dshh-commit'))
   assert.equal(rows.length, 2)
@@ -1078,18 +1078,22 @@ test('最近提交：一行一条，带短 sha、标题、HEAD 徽标与相对�
   // HEAD 徽标只在 HEAD 那条上出现。
   assert.equal(findAll(node, byClass('dshh-chead')).length, 1)
 
-  // 相对时间：一小时前 / 两小时前。
-  assert.ok(text.includes('1' + 'time.hours'), `期望「1 小时前」，实际 ${JSON.stringify(text)}`)
-  assert.ok(text.includes('2' + 'time.hours'))
+  // 具体时刻（用户要求）：不再是 `2 小时前`。COMMITS 里两条相差一小时 → 两个 `HH:mm`。
+  const expectedA = new RegExp('\\d{2}:\\d{2}')
+  assert.ok(expectedA.test(text), `期望具体时刻，实际 ${JSON.stringify(text)}`)
+  // 夹具是"1/2 小时前"：通常落在今天 → `HH:mm`；若测试正好跨过午夜就成了 `MM-DD HH:mm`。
+  // 所以两种形状都接受，但必须**是**具体时刻，而不是 `2 小时前`。
+  assert.ok(/(\d{2}-\d{2} )?\d{2}:\d{2}/.test(text), `期望具体时刻，实际 ${JSON.stringify(text)}`)
 })
 
-test('最近提交：悬停给出点击提示、作者、日期与 refs', () => {
+test('最近提交：悬停给出点击提示、作者、完整时刻与 refs', () => {
   const node = renderPanel({ commits: COMMITS })
   const first = findAll(node, byClass('dshh-commit'))[0]
   const lines = first.props.title.split('\n')
   assert.equal(lines[0], 'commit.click', '第一行说明这行可点')
   assert.equal(lines[2], 'feat: 差异视图')
-  assert.equal(lines[3], 'wjc · 2026-10-14')
+  assert.ok(/^wjc · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(lines[3]),
+    `悬停要给到分钟（不再依赖 git 那个只有日期的短日期），实际 ${lines[3]}`)
   assert.ok(lines.includes('HEAD -> main') && lines.includes('origin/main'))
 })
 
@@ -1099,9 +1103,18 @@ test('最近提交：没有提交就整段不渲染', () => {
   assert.ok(!textOf(renderPanel({ commits: [] })).includes('panel.commits'), '连小标题都不出现')
 })
 
-test('最近提交：超过 30 天回退到提交自己的日期', () => {
-  const old = [{ sha: 'aaaaaaa', author: 'wjc', date: '2025-01-02', committedAt: Date.now() - 400 * 24 * 3600 * 1000, refs: [], subject: '很久以前' }]
-  assert.ok(textOf(renderPanel({ commits: old })).includes('2025-01-02'))
+test('时刻分三档：今天只给时刻、同一年给月日+时刻、跨年才带年份', () => {
+  const at = (y, m, d, hh, mm) => new Date(y, m - 1, d, hh, mm).getTime()
+  const today = at(2026, 10, 16, 14, 18)
+  const rows = [
+    { sha: 'aaaaaaa', author: 'wjc', date: '2026-10-16', committedAt: at(2026, 10, 16, 9, 5), refs: [], subject: '今天早上' },
+    { sha: 'bbbbbbb', author: 'wjc', date: '2026-03-02', committedAt: at(2026, 3, 2, 22, 37), refs: [], subject: '今年早些时候' },
+    { sha: 'ccccccc', author: 'wjc', date: '2025-12-31', committedAt: at(2025, 12, 31, 9, 12), refs: [], subject: '去年' },
+  ]
+  const text = textOf(renderPanel({ commits: rows, now: today }))
+  assert.ok(text.includes('09:05'), `今天 → 只给时刻，实际 ${text}`)
+  assert.ok(text.includes('03-02 22:37'), `同一年 → 月日+时刻，实际 ${text}`)
+  assert.ok(text.includes('2025-12-31 09:12'), `跨年 → 带年份，实际 ${text}`)
 })
 
 test('最近提交：整行可点，点击把这次提交交给 store（再点一次收起）', () => {
