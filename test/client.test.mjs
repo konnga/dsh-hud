@@ -3132,3 +3132,31 @@ test('胶囊：cwd 为空或就是根目录时，不画名字也不画那个分�
   const root = textOf(renderPill({}, sessionOf('/')))
   assert.ok(!root.includes(' · git:('), `根目录也算不出名字，实际 ${JSON.stringify(root)}`)
 })
+
+test('工具胶囊配色：对齐 codex-hud —— 只有状态符上色，名字/次数/分隔符用正文色', () => {
+  // codex-hud 的 activity-lines.ts：`◐`(yellow) + 工具名(cyan) + 目标(默认色)；
+  // 已完成是 `✓`(green) + 名字(默认色) + `×count`(默认色)。它**不淡化**次数与分隔符。
+  const running = renderTools({
+    tools: toolsState({
+      active: { name: 'bash', summary: 'pnpm test', startedAt: TOOLS_NOW - 500 },
+      counts: [{ name: 'bash', count: 1, ok: true }],
+      total: 1,
+    }),
+  })
+  const runningPill = findByAttr(running, 'tools-pill')
+  assert.equal(findAll(runningPill, byClass('dshh-toolsGlyphRun')).length, 1, '运行中用 ◐ + 警告色')
+  assert.equal(findAll(runningPill, byClass('dshh-toolsName')).length, 1, '运行中的工具名走那一支青色')
+  assert.ok(textOf(runningPill).includes('◐'), `运行中不再是 🛠，实际 ${textOf(runningPill)}`)
+
+  const idle = renderTools({
+    tools: toolsState({
+      counts: [{ name: 'bash', count: 16, ok: true }, { name: 'apply_patch', count: 2, ok: false }],
+      total: 18,
+    }),
+  })
+  const idlePill = findByAttr(idle, 'tools-pill')
+  assert.equal(findAll(idlePill, byClass('dshh-toolsGlyphOk')).length, 1, '成功的 ✓ 用成功色')
+  assert.equal(findAll(idlePill, byClass('dshh-toolsGlyphBad')).length, 1, '失败的 ✗ 用错误色')
+  assert.equal(findAll(idlePill, byClass('dshh-toolsName')).length, 0, '空闲时名字不上色（codex 也是默认色）')
+  assert.equal(findAll(idlePill, byClass('dshh-toolsDim')).length, 0, '次数不该被淡化 —— 这是原来的偏离')
+})
