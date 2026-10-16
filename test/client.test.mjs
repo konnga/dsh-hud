@@ -749,11 +749,13 @@ function findButton(node, label, depth = 0) {
 function mountPanel(state = {}, options = {}) {
   const mini = createMiniReact()
   const bundle = mountClient({ ReactImpl: mini.React })
-  const calls = { openPanel: [], movePanel: [], commitPanel: [], resetPanel: 0, diffWidth: [], closeDiff: 0, closeCommit: 0, closeDetail: 0, persist: 0, stepFile: [], openCursor: 0, stepHunk: [], toggleHunk: [], refresh: 0 }
+  const calls = { openPanel: [], movePanel: [], commitPanel: [], resetPanel: 0, diffWidth: [], commitWidth: [], closeDiff: 0, closeCommit: 0, closeDetail: 0, persist: 0, stepFile: [], openCursor: 0, stepHunk: [], toggleHunk: [], refresh: 0 }
   // 快照是可变对象：movePanel 必须更新它，否则「松开时从 store 现读位置」读不到东西。
   const snapshot = { phase: 'ready', sessionId: 'session-1', cwd: '/Users/me/project', panelOpen: true, status: statusFixture(), diff: null, anchorTop: null, diffWidth: 470, ...state }
   const store = {
     ...fakeStore(snapshot),
+    setCommitWidth: width => { calls.commitWidth.push(width); snapshot.commitWidth = width },
+    setDiffWidth: width => { calls.diffWidth.push(width); snapshot.diffWidth = width },
     openPanel: value => { calls.openPanel.push(value); snapshot.panelOpen = value },
     movePanel: (pos) => { calls.movePanel.push(pos); snapshot.pos = pos },
     commitPanel: pos => { calls.commitPanel.push(pos) },
@@ -1259,8 +1261,11 @@ test('提交明细：空提交、读取中、找不到这次提交各有文案',
   assert.equal(findAll(emptyPane, byClass('dshh-row')).length, 0, '明细里没有文件行')
   assert.equal(findAll(empty, byClass('dshh-workbench')).length, 1, '明细在场就进工作台（左栏照旧）')
   assert.equal(findAll(empty, byClass('dshh-diffview')).length, 0, '空提交没有差异栏')
-  assert.equal(findAll(empty, byClass('dshh-grip')).length, 0, '没有差异栏就没有抓握')
-  assert.equal(empty.props.style.width, 380 + 240, '左栏 + 明细栏')
+  // 只有提交明细栏时，右边缘那条抓握改成调它 —— 它是右边界上唯一还能变宽的东西，
+  // 按下去没反应才是 bug。所以这里期望"有抓握"，且它是提交栏那条。
+  assert.equal(findAll(empty, byClass('dshh-grip')).length, 1, '只有提交栏 → 右边缘那一条调提交栏')
+  assert.equal(findAll(empty, item => item.props?.['data-dsh-hud'] === 'grip-commit').length, 1, '标记成提交栏那条')
+  assert.equal(empty.props.style.width, 380 + 240 + 6, '左栏 + 明细栏 + 右边缘那条的让位（它是绝对定位，不占宽但要预留）')
 
   const loading = renderPanel(commitState({ phase: 'loading' }))
   assert.ok(textOf(findAll(loading, byClass('dshh-commitpane'))[0]).includes('commit.loading'))
@@ -1276,16 +1281,19 @@ test('提交明细：合并提交明确说按第一父提交比较', () => {
   assert.ok(textOf(findAll(renderPanel(commitState({ merge: true })), byClass('dshh-commitpane'))[0]).includes('commit.merge'))
 })
 
-test('提交差异：三栏 = 左栏 + 提交明细栏 + 差异栏，差异栏没有 未暂存/已暂存 页签', () => {
+test('提交差异：三栏 + 两条抓握（栏间那条调提交栏、右边缘那条调差异栏）', () => {
   const node = renderPanel(commitDiffState())
 
   assert.equal(findAll(node, byClass('dshh-workbench')).length, 1)
   assert.equal(findAll(node, byClass('dshh-leftpane')).length, 1, '左栏')
   assert.equal(findAll(node, byClass('dshh-commitpane')).length, 1, '提交明细栏')
   assert.equal(findAll(node, byClass('dshh-diffview')).length, 1, '差异栏')
-  assert.equal(node.props.style.width, 380 + 240 + 6 + 470, '左栏 + 明细栏 + 抓握 + 差异栏')
-  assert.equal(findAll(node, byClass('dshh-commitpane'))[0].props.style.width, 240, '明细栏是固定宽度')
-  assert.equal(findAll(node, byClass('dshh-grip')).length, 1, '抓握仍只调整差异栏')
+  assert.equal(node.props.style.width, 380 + 240 + 6 + 470 + 6, '左栏 + 明细栏 + 栏间抓握 + 差异栏 + 右边缘抓握')
+  assert.equal(findAll(node, byClass('dshh-commitpane'))[0].props.style.width, 240, '明细栏默认 240px（可拖）')
+  // 三栏时是两条：提交栏右边那条（调提交栏）+ 面板右边缘那条（调差异栏）。
+  assert.equal(findAll(node, byClass('dshh-grip')).length, 2, '提交栏与差异栏各一条抓握')
+  assert.equal(findAll(node, item => item.props?.['data-dsh-hud'] === 'grip-commit').length, 1, '其中一条是提交栏的')
+  assert.equal(findAll(node, item => item.props?.['data-dsh-hud'] === 'grip').length, 1, '另一条是差异栏的')
 
   const middle = findAll(node, byClass('dshh-commitpane'))[0]
   const middleText = textOf(middle)
@@ -3193,4 +3201,34 @@ test('git 胶囊配色：对齐 codex-hud 的 gitSegment（git:( 品红、分支
   }
   assert.ok(/\.dshh-gitWrap\{[^}]*--dsh-hud-magenta/.test(css), 'git:( 用品红变量')
   assert.ok(/\.dshh-branch\{[^}]*--dsh-hud-cyan/.test(css), '分支用青变量')
+})
+
+
+test('工作台：拖动提交栏右边那条抓握改它的宽度，松手才落盘', () => {
+  const state = commitDiffState()
+  const { tree, bundle, calls } = mountPanel(state)
+  const inner = findAll(tree, item => item.props?.['data-dsh-hud'] === 'grip-commit')[0]
+  assert.ok(inner, '三栏时提交栏右边有一条抓握')
+
+  inner.props.onPointerDown({ button: 0, pointerId: 7, clientX: 800, preventDefault: () => {} })
+  const move = bundle.listeners.get('pointermove')?.[0]?.listener
+  const up = bundle.listeners.get('pointerup')?.[0]?.listener
+  move({ pointerId: 7, clientX: 740 })
+  assert.deepEqual(calls.commitWidth, [300], '往左拖 60px → 提交栏 240 + 60')
+  assert.deepEqual(calls.diffWidth, [], '不该动差异栏')
+
+  up({ pointerId: 7 })
+  assert.equal(calls.persist, 1, '松手落盘')
+})
+
+test('工作台：提交栏宽度按存档恢复，并有最小值下限', () => {
+  const narrow = renderPanel({ ...commitDiffState(), commitWidth: 40 })
+  // 40 小于下限 180 → 面板宽度按 180 算（否则路径全被截成一个字）。
+  assert.equal(narrow.props.style.width, 380 + 180 + 6 + 470 + 6)
+
+  // 用 300 而不是更大的值：面板总宽会被视口钳住（harness 的 innerWidth 约 1216），
+  // 420 那一档会被钳到 1184，反而看不出"存档里的宽度有没有生效"。
+  const wide = renderPanel({ ...commitDiffState(), commitWidth: 300 })
+  assert.equal(wide.props.style.width, 380 + 300 + 6 + 470 + 6, '存档里的宽度要生效')
+  assert.equal(findAll(wide, byClass('dshh-commitpane'))[0].props.style.width, 300, '栏自己按存档宽度渲染')
 })
