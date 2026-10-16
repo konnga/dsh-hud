@@ -37,6 +37,14 @@
   ],
   "license": "MIT",
   "author": "konnga",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/konnga/dsh-hud.git"
+  },
+  "homepage": "https://github.com/konnga/dsh-hud#readme",
+  "bugs": {
+    "url": "https://github.com/konnga/dsh-hud/issues"
+  },
   "publishConfig": {
     "access": "public"
   },
