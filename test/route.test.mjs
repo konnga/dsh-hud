@@ -14,7 +14,7 @@ test('注册一条前缀路由与会话归因监听，并都挂在自身的 ctx.
   assert.equal(typeof routes[0].handler, 'function')
   // 两个 effect：会话归因的事件监听 + 路由本身（标签顺序就是注册顺序）。
   assert.deepEqual(labels, ['dsh-hud: session change tracking', `dsh-hud: POST ${CHANNEL}/*`])
-  assert.deepEqual([...listeners.keys()].sort(), ['fs/edit-intent', 'fs/observed', 'fs/write-intent', 'tools/post-execute'])
+  assert.deepEqual([...listeners.keys()].sort(), ['fs/edit-intent', 'fs/observed', 'fs/write-intent', 'tools/post-execute', 'tools/pre-execute'])
 })
 
 test('非 POST 一律 405', async () => {

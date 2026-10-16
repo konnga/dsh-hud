@@ -515,3 +515,146 @@ test('会话一览：把"这个会话自己改过什么"一并带上（非仓库
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+/* --------------------------------------------------- 工具活动（胶囊那一段） */
+
+/**
+ * 一次工具调用：走真实的两条 waterfall（`tools/pre-execute` / `tools/post-execute`）。
+ *
+ * 两条都要求监听器把 `next()` 的判定原样透传（兜底分别是 `{kind:'allow'}` 与 `{kind:'accept'}`），
+ * 所以这里同时断言透传 —— 吞掉判定就等于改掉宿主对工具结果的裁决。
+ */
+/** 只跑"开跑"那一步（要观察 active 的用例需要它）。 */
+function toolStart(bundle, options = {}) {
+  const context = {
+    name: options.name ?? 'bash',
+    callId: options.callId ?? 'call-1',
+    arguments: options.arguments ?? { command: 'pnpm test' },
+    agent: { session: { header: { id: options.sessionId ?? 'session-x', cwd: options.cwd ?? CWD } } },
+  }
+  const allow = { kind: 'allow' }
+  let returned
+  for (const listener of bundle.listeners.get('tools/pre-execute') ?? []) returned = listener(context, () => allow)
+  return { context, returned, allow }
+}
+
+/** 只跑"结束"那一步。 */
+function toolFinish(bundle, context, options = {}) {
+  const accept = { kind: 'accept' }
+  let returned
+  for (const listener of bundle.listeners.get('tools/post-execute') ?? []) returned = listener(context, options.result ?? { ok: true }, () => accept)
+  return { returned, accept }
+}
+
+/** 一次完整调用 = 开跑 + 结束（大多数用例只关心计数）。 */
+function toolCall(bundle, options = {}) {
+  const { context, returned: startReturned, allow } = toolStart(bundle, options)
+  const { returned: finishReturned, accept } = toolFinish(bundle, context, options)
+  return { startReturned, allow, finishReturned, accept, context }
+}
+
+async function readTools(bundle, sessionId) {
+  const result = await rpcCall(bundle.handler, CHANNEL, 'session-tools', { args: { sessionId } })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  return result.value
+}
+
+test('工具活动：pre-execute 必须透传判定，post-execute 也要（不能吞掉工具结果的裁决）', () => {
+  const bundle = mount()
+  const { startReturned, allow, finishReturned, accept } = toolCall(bundle)
+  assert.equal(startReturned, allow, 'pre-execute 的判定要原样返回')
+  assert.equal(finishReturned, accept, 'post-execute 的判定要原样返回')
+})
+
+test('工具活动：开跑时记下名字、参数摘要与开始时刻，结束后进"最近"并带上耗时', async () => {
+  const session = sessionOf('tools-basic')
+  const bundle = mount()
+  const { context } = toolStart(bundle, { sessionId: session, name: 'bash', arguments: { command: 'pnpm test --filter foo' }, callId: 'c1' })
+
+  const running = await readTools(bundle, session)
+  assert.equal(running.active.name, 'bash', '跑的时候要能报出工具名')
+  assert.equal(running.active.summary, 'pnpm test --filter foo', '参数摘要给命令原文（截断）')
+  assert.equal(typeof running.active.startedAt, 'number', '实时秒数由客户端本地计时，所以要给开始时刻')
+  assert.equal(running.total, 1)
+
+  toolFinish(bundle, context, { result: { ok: false, error: { code: 'exit-1' } } })
+  const done = await readTools(bundle, session)
+  assert.equal(done.active, null, '结束后不该还挂着 active')
+  assert.equal(done.recent.length, 1)
+  assert.equal(done.recent[0].ok, false, '失败要如实标出来')
+  assert.equal(typeof done.recent[0].ms, 'number', '要有耗时')
+  assert.equal(done.total, 1, '同一次调用不该被算两次')
+})
+
+test('工具活动：按工具名累计次数，并按次数排序', async () => {
+  const session = sessionOf('tools-counts')
+  const bundle = mount()
+  for (const [callId, name] of [['c1', 'bash'], ['c2', 'bash'], ['c3', 'bash'], ['c4', 'read_file']]) {
+    toolCall(bundle, { sessionId: session, name, callId, arguments: { command: 'x' } })
+  }
+  const value = await readTools(bundle, session)
+  assert.deepEqual(value.counts, [{ name: 'bash', count: 3 }, { name: 'read_file', count: 1 }])
+  assert.equal(value.total, 4)
+})
+
+test('工具活动：参数摘要只认路径/命令类字段，认不出来就留空（不把文件内容贴到界面上）', async () => {
+  const session = sessionOf('tools-privacy')
+  const bundle = mount()
+  toolCall(bundle, { sessionId: session, name: 'write', callId: 'c1', arguments: { filePath: 'src/a.ts', content: 'SECRET BODY 不应该出现在摘要里' } })
+  toolCall(bundle, { sessionId: session, name: 'weird', callId: 'c2', arguments: { content: 'SECRET BODY 不应该出现在摘要里' } })
+
+  const value = await readTools(bundle, session)
+  const byName = Object.fromEntries(value.recent.map(item => [item.name, item]))
+  assert.equal(byName['write'].summary, 'src/a.ts', '有路径就用路径')
+  assert.equal(byName['weird'].summary, null, '只有 content 时留空，绝不猜')
+  assert.ok(!JSON.stringify(value).includes('SECRET BODY'), '整个载荷里都不该出现文件内容')
+})
+
+test('工具活动：并发调用时 active 记最后一次，先结束的那次仍进"最近"（耗时为 null）', async () => {
+  const session = sessionOf('tools-concurrent')
+  const bundle = mount()
+  const pre = bundle.listeners.get('tools/pre-execute')
+  const post = bundle.listeners.get('tools/post-execute')
+  const make = callId => ({ name: 'bash', callId, arguments: { command: 'x' }, agent: { session: { header: { id: session, cwd: CWD } } } })
+  for (const listener of pre) listener(make('c1'), () => ({ kind: 'allow' }))
+  for (const listener of pre) listener(make('c2'), () => ({ kind: 'allow' }))
+  for (const listener of post) listener(make('c1'), { ok: true }, () => ({ kind: 'accept' }))
+
+  const value = await readTools(bundle, session)
+  assert.equal(value.active.callId, 'c2', 'active 是最后一次开跑的那个')
+  assert.equal(value.recent[0].ms, null, '配不上开始时刻就给 null，不编一个数')
+})
+
+test('工具活动：只留最近 12 条，端点只回最近 5 条', async () => {
+  const session = sessionOf('tools-ring')
+  const bundle = mount()
+  for (let i = 0; i < 20; i += 1) toolCall(bundle, { sessionId: session, name: 'bash', callId: `c${i}`, arguments: { command: `run ${i}` } })
+
+  const value = await readTools(bundle, session)
+  assert.equal(value.recent.length, 5, '端点只回最近 5 条（悬停里够用）')
+  assert.equal(value.recent[0].summary, 'run 19', '最新的在最前')
+  assert.equal(value.total, 20, '总数不受环形缓冲影响')
+})
+
+test('工具活动：会话之间互不串，没有记录的会话回空壳而不是报错', async () => {
+  const first = sessionOf('tools-iso-a')
+  const second = sessionOf('tools-iso-b')
+  const bundle = mount()
+  toolCall(bundle, { sessionId: first, name: 'bash', callId: 'c1' })
+
+  assert.equal((await readTools(bundle, first)).total, 1)
+  const other = await readTools(bundle, second)
+  assert.deepEqual(other, { sessionId: second, tracking: true, active: null, recent: [], counts: [], total: 0 })
+  const none = await readTools(bundle, null)
+  assert.equal(none.sessionId, null)
+})
+
+test('工具活动：卸载时清空', async () => {
+  const session = sessionOf('tools-teardown')
+  const bundle = mount()
+  toolCall(bundle, { sessionId: session, name: 'bash', callId: 'c1' })
+  assert.equal((await readTools(bundle, session)).total, 1)
+
+  for (const cleanup of bundle.cleanups) cleanup()
+  assert.equal((await readTools(bundle, session)).total, 0, '卸载后不该留着上一个进程的工具活动')
+})

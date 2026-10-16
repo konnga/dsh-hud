@@ -405,14 +405,16 @@ test('客户端插件面声明 apply 与三个硬依赖服务', () => {
   assert.deepEqual(exported.inject, ['slots', 'connection', 'locale'])
 })
 
-test('apply 注册四个座位：胶囊、面板、⋯ 菜单摘要、悬停详情（侧栏行内标记已按设计删除）', () => {
+test('apply 注册五个座位：Git 胶囊、工具胶囊、面板、⋯ 菜单摘要、悬停详情', () => {
   const { registrations } = mountClient()
 
-  assert.equal(registrations.length, 4, '应当注册四条座位')
+  assert.equal(registrations.length, 5, '应当注册五条座位')
   const byId = Object.fromEntries(registrations.map(entry => [entry.options.id, entry.options]))
   assert.deepEqual(Object.keys(byId).sort(), [
-    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-session-hover', 'dsh-hud-session-menu',
+    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-session-hover', 'dsh-hud-session-menu', 'dsh-hud-tools',
   ])
+  assert.equal(byId['dsh-hud-tools'].name, 'conversation.input.dock', '工具胶囊也在 dock 那一列（各自一行）')
+  assert.ok(byId['dsh-hud-tools'].order > byId['dsh-hud-pill'].order, '排在 Git 胶囊之后')
   assert.equal(byId['dsh-hud-session-menu'].name, 'sidebar.workspaces.session.menu.item', '只读摘要坐在 ⋯ 菜单里')
   assert.equal(byId['dsh-hud-session-hover'].name, 'sidebar.session.row.hover', '详情坐在悬停卡片里')
 
@@ -1358,7 +1360,7 @@ test('提交明细（store）：点一行 → 取这次提交 → 自动打开�
   assert.equal(snapshot.diff.side, 'commit', '提交差异只有一个"侧"')
 
   // status 与 session-changes 是"每轮刷新都搭车"的只读事实，这里只看这次提交相关的调用。
-  const first = calls.filter(call => call.endpoint !== 'status' && call.endpoint !== 'session-changes' && call.endpoint !== 'session-statuses')
+  const first = calls.filter(call => !['status', 'session-changes', 'session-statuses', 'session-tools'].includes(call.endpoint))
   assert.deepEqual(first.map(call => call.endpoint), ['commit', 'commit-diff'])
   assert.deepEqual(first[0].args, { cwd: '/x', sha: 'sha-1' }, '拿点击时那个（可能是短）sha 去问')
   assert.deepEqual(first[1].args, { cwd: '/x', sha: 'sha-1-full', path: 'src/a.ts', origPath: null }, '之后一律用解析回来的完整 sha')
@@ -2770,4 +2772,111 @@ test('⋯ 菜单摘要：非仓库目录也能用（本会话改动与 git 无�
   const text = textOf(findByAttr(node, 'menu-readout'))
   assert.ok(text.includes('rows.noRepo'), '说清不在仓库里')
   assert.ok(text.includes('session.pill'), '本会话改动照报')
+})
+
+/* ------------------------------------------------ 工具活动胶囊（像 codex-hud） */
+
+const TOOLS_NOW = 1_700_000_000_000
+
+/** 渲染工具胶囊（`now` 固定，便于断言实时秒数）。 */
+function renderTools(state = {}, options = {}) {
+  return renderSeat('dsh-hud-tools', {
+    phase: 'ready',
+    sessionId: 'session-1',
+    cwd: '/Users/me/project',
+    status: statusFixture(),
+    tools: { phase: 'ready', active: null, recent: [], counts: [], total: 0, updatedAt: TOOLS_NOW },
+  }, state, { now: TOOLS_NOW, ...options })
+}
+
+function toolsState(overrides = {}) {
+  return { phase: 'ready', active: null, recent: [], counts: [], total: 0, updatedAt: TOOLS_NOW, ...overrides }
+}
+
+test('工具胶囊：正在跑就报工具名与实时秒数（秒数本地算，不靠轮询）', () => {
+  const node = renderTools({ tools: toolsState({ active: { name: 'bash', summary: 'pnpm test', startedAt: TOOLS_NOW - 1200 } }) })
+  const pill = findByAttr(node, 'tools-pill')
+  assert.ok(pill, '有工具在跑时要画')
+  const text = textOf(pill)
+  assert.ok(text.includes('bash'), `要报工具名，实际 ${text}`)
+  assert.ok(text.includes('1.2s'), `要报实时秒数，实际 ${text}`)
+  assert.ok(String(pill.props.title).includes('tools.now'), '悬停说清"现在在跑什么"')
+  assert.ok(String(pill.props.title).includes('pnpm test'), '并把参数摘要贴出来')
+})
+
+test('工具胶囊：空闲时报最近一次是谁、本会话一共几次；失败打叉', () => {
+  const ok = renderTools({
+    tools: toolsState({ recent: [{ name: 'bash', ok: true, ms: 800, summary: 'pnpm test' }], total: 12 }),
+  })
+  const okText = textOf(findByAttr(ok, 'tools-pill'))
+  assert.ok(okText.includes('✓'), `成功打勾，实际 ${okText}`)
+  assert.ok(okText.includes('bash'))
+  assert.ok(okText.includes('×12'), `要报总次数，实际 ${okText}`)
+
+  const bad = renderTools({
+    tools: toolsState({ recent: [{ name: 'read_file', ok: false, ms: 200, summary: 'src/a.ts' }], total: 3 }),
+  })
+  const badText = textOf(findByAttr(bad, 'tools-pill'))
+  assert.ok(badText.includes('✗'), `失败打叉，实际 ${badText}`)
+  assert.ok(badText.includes('read_file'))
+})
+
+test('工具胶囊：没跑过工具就整枚不画（空白注册会白占一行）', () => {
+  assert.equal(renderTools({}), null, 'total 0 且没有 active → 不占那一行')
+  assert.equal(renderTools({ tools: toolsState({ phase: 'idle' }) }), null, '还没取到数据时也不画')
+})
+
+test('工具胶囊：悬停给出总次数、各工具次数与最近几条（含耗时与命令摘要）', () => {
+  const node = renderTools({
+    tools: toolsState({
+      recent: [
+        { name: 'bash', ok: true, ms: 800, summary: 'pnpm test' },
+        { name: 'read_file', ok: false, ms: 200, summary: 'src/a.ts' },
+      ],
+      counts: [{ name: 'bash', count: 9 }, { name: 'read_file', count: 3 }],
+      total: 12,
+    }),
+  })
+  const title = String(findByAttr(node, 'tools-pill').props.title)
+  assert.ok(title.includes('tools.total'), '要有总次数')
+  assert.ok(title.includes('tools.byTool'), '要有各工具次数')
+  assert.ok(title.includes('bash ×9'), `各工具次数要对，实际 ${title}`)
+  assert.ok(title.includes('tools.recent'), '要有最近几条')
+  assert.ok(title.includes('0.8s'), '要有耗时')
+  assert.ok(title.includes('pnpm test'), '要有命令摘要')
+})
+
+test('工具胶囊（store）：取回后归一，换会话先清空；宿主不认端点时不留残留', async () => {
+  const calls = []
+  const bundle = mountClient({
+    rpc: (channel, endpoint) => {
+      calls.push(endpoint)
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'session-tools') {
+        return Promise.resolve({ ok: true, value: {
+          sessionId: 'session-1', tracking: true,
+          active: { name: 'bash', summary: 'pnpm test', startedAt: TOOLS_NOW },
+          recent: [{ name: 'bash', ok: true, ms: 800, summary: 'pnpm test' }],
+          counts: [{ name: 'bash', count: 1 }], total: 1,
+        } })
+      }
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+  })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  store.bindSession('session-1', '/Users/me/project')
+  await flush()
+
+  const tools = store.getSnapshot().tools
+  assert.equal(tools.phase, 'ready')
+  assert.equal(tools.active.name, 'bash')
+  assert.equal(tools.total, 1)
+  assert.ok(calls.includes('session-tools'), '要跟着刷新去取')
+  const line = bundle.consoleLines.find(item => item.includes('session-tools {'))
+  assert.ok(line && line.includes('"active":"bash"'), `要有现场日志，实际 ${line}`)
+
+  // 换会话：先清空，别显示上一个会话正在跑的工具。
+  store.bindSession('session-2', '/Users/me/project')
+  assert.equal(store.getSnapshot().tools.active, null)
+  assert.equal(store.getSnapshot().tools.total, 0)
 })
