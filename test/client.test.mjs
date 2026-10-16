@@ -3026,3 +3026,24 @@ test('工具胶囊（store）：密节拍里内容没变就不 set（3s 一次�
   await flush()
   assert.equal(store.getSnapshot().tools, first, '内容一样就不该换新对象（否则每 3s 全界面重渲染）')
 })
+
+/**
+ * 双状态冒烟：同一行"先空闲、后正在跑"都要能画出来。
+ *
+ * 诚实标注它**挡不住**什么：真事故是"hooks 被放进普通函数 `toolPillNode` 里、还条件调用"，
+ * 真 React 会抛错并让整行 dock 消失（两枚胶囊一起不见）。我们的假 React 不校验钩子顺序，
+ * 所以这条在修复前也是绿的 —— 真正的防线是 `test/mini-react.mjs` 里那条钩子顺序校验，
+ * 但它目前只覆盖走 `mount()` 渲染的座位（胶囊是直接调用组件渲染的）。要让防线覆盖到这里，
+ * 得把胶囊也改成走 `mount()`：那是一次 harness 改造，单独做。
+ * 注意：**不传 `now`**，走生产路径（组件自己滴答）。
+ */
+test('工具胶囊：同一行"先空闲、后正在跑"都能画（冒烟；钩子顺序的防线见 mini-react）', () => {
+  const idle = renderTools({}, { now: undefined })
+  assert.ok(findByAttr(idle, 'pill'), '空闲那一行照样在')
+
+  const running = renderTools({
+    tools: toolsState({ active: { name: 'bash', summary: 'pnpm test', startedAt: TOOLS_NOW - 500 } }),
+  }, { now: undefined })
+  assert.ok(findByAttr(running, 'pill'), '正在跑时 Git 胶囊还在')
+  assert.ok(findByAttr(running, 'tools-pill'), '并且多了工具那一枚')
+})
