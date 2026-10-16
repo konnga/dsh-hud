@@ -1097,9 +1097,8 @@ test('最近提交：一行一条，带短 sha、标题、HEAD 徽标与具体�
   // 具体时刻（用户要求）：不再是 `2 小时前`。COMMITS 里两条相差一小时 → 两个 `HH:mm`。
   const expectedA = new RegExp('\\d{2}:\\d{2}')
   assert.ok(expectedA.test(text), `期望具体时刻，实际 ${JSON.stringify(text)}`)
-  // 夹具是"1/2 小时前"：通常落在今天 → `HH:mm`；若测试正好跨过午夜就成了 `MM-DD HH:mm`。
-  // 所以两种形状都接受，但必须**是**具体时刻，而不是 `2 小时前`。
-  assert.ok(/(\d{2}-\d{2} )?\d{2}:\d{2}/.test(text), `期望具体时刻，实际 ${JSON.stringify(text)}`)
+  // 一律完整年月日 + 时分（`2026-10-16 14:18`），不再有"只给时刻"的那一档。
+  assert.ok(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(text), `期望完整年月日，实际 ${JSON.stringify(text)}`)
 })
 
 test('最近提交：悬停给出点击提示、作者、完整时刻与 refs', () => {
@@ -1119,7 +1118,7 @@ test('最近提交：没有提交就整段不渲染', () => {
   assert.ok(!textOf(renderPanel({ commits: [] })).includes('panel.commits'), '连小标题都不出现')
 })
 
-test('时刻分三档：今天只给时刻、同一年给月日+时刻、跨年才带年份', () => {
+test('时刻一律给完整年月日：`2026-10-16 14:18`（不再分档、也不再是相对时间）', () => {
   const at = (y, m, d, hh, mm) => new Date(y, m - 1, d, hh, mm).getTime()
   const today = at(2026, 10, 16, 14, 18)
   const rows = [
@@ -1127,10 +1126,12 @@ test('时刻分三档：今天只给时刻、同一年给月日+时刻、跨年�
     { sha: 'bbbbbbb', author: 'wjc', date: '2026-03-02', committedAt: at(2026, 3, 2, 22, 37), refs: [], subject: '今年早些时候' },
     { sha: 'ccccccc', author: 'wjc', date: '2025-12-31', committedAt: at(2025, 12, 31, 9, 12), refs: [], subject: '去年' },
   ]
-  const text = textOf(renderPanel({ commits: rows, now: today }))
-  assert.ok(text.includes('09:05'), `今天 → 只给时刻，实际 ${text}`)
-  assert.ok(text.includes('03-02 22:37'), `同一年 → 月日+时刻，实际 ${text}`)
-  assert.ok(text.includes('2025-12-31 09:12'), `跨年 → 带年份，实际 ${text}`)
+  const node = renderPanel({ commits: rows, now: today })
+  const rowsText = findAll(node, byClass('dshh-commit')).map(textOf)
+  // 每一行都必须带完整年月日 —— 只给 `09:05` 这种（今天的那档）已经不被接受。
+  assert.ok(rowsText[0].includes('2026-10-16 09:05'), `今天也要年月日，实际 ${rowsText[0]}`)
+  assert.ok(rowsText[1].includes('2026-03-02 22:37'), `同一年也要，实际 ${rowsText[1]}`)
+  assert.ok(rowsText[2].includes('2025-12-31 09:12'), `跨年当然要，实际 ${rowsText[2]}`)
 })
 
 test('最近提交：整行可点，点击把这次提交交给 store（再点一次收起）', () => {
