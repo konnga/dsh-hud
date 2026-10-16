@@ -3,6 +3,10 @@
 > 一个只读的工作区 Git 面板：分支、ahead/behind、改动清单与差异，外加「这个会话改过哪些文件、审到哪了、跑了什么工具」。
 > A read-only workspace Git panel for DeepSeek Harness, with per-session change attribution.
 
+![输入框上方的两枚胶囊：左边是 Git 状态，右边是工具与技能](docs/images/capsules.webp)
+
+*左：工作区名 · `git:(分支*)` · ahead/behind · 改动计数 · 本会话改过几个文件。右：每个工具的调用次数、正在跑什么、以及会话调用过哪些技能 —— 图中 `aihot ×1` 是红的，因为那次调用失败了。*
+
 ## 安装
 
 桌面端「设置 → 插件 → 添加插件」里填 `@konnga/dsh-hud`。
