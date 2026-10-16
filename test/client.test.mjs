@@ -513,12 +513,12 @@ test('自有样式表打上 DSH 的所有权标记，且被 HMR 记账删掉后�
 
 test('胶囊：脏分支带星号、领先落后，并用 codex-hud 式简写符分组展示改动', () => {
   const text = textOf(renderPill())
-  assert.ok(text.includes('⎇ main*'), `期望分支摘要，实际 ${JSON.stringify(text)}`)
+  assert.ok(text.includes('git:(main*)'), `期望分支摘要，实际 ${JSON.stringify(text)}`)
   assert.ok(text.includes('↑1'), '领先数')
   assert.ok(text.includes('↓2'), '落后数')
   // 简写符：M 已修改 / A 已暂存新增 / ? 未跟踪，按固定顺序。
   // 前面多了工作区名（另有专门用例钉它），这里断言分支摘要那一段。
-  assert.ok(text.endsWith('⎇ main* ↑1 ↓2 M2 A1 ?1'), `实际 ${JSON.stringify(text)}`)
+  assert.ok(text.endsWith('git:(main*) ↑1 ↓2 M2 A1 ?1'), `实际 ${JSON.stringify(text)}`)
 })
 
 test('胶囊：简写符只列非零项，顺序固定为 M A D R C T ? !', () => {
@@ -527,7 +527,7 @@ test('胶囊：简写符只列非零项，顺序固定为 M A D R C T ? !', () =
       counts: { modified: 4, added: 0, deleted: 2, renamed: 1, copied: 0, typeChanged: 0, untracked: 3, conflicted: 1 },
     }),
   }))
-  assert.ok(text.endsWith('⎇ main* ↑1 ↓2 M4 D2 R1 ?3 !1'), `实际 ${JSON.stringify(text)}`)
+  assert.ok(text.endsWith('git:(main*) ↑1 ↓2 M4 D2 R1 ?3 !1'), `实际 ${JSON.stringify(text)}`)
 })
 
 test('胶囊：简写符各自上色，与面板计数同色', () => {
@@ -601,7 +601,7 @@ test('胶囊：干净仓库不带星号也不带计数', () => {
   const text = textOf(renderPill({
     status: statusFixture({ dirty: false, ahead: 0, behind: 0, counts: { modified: 0, added: 0, deleted: 0, renamed: 0, copied: 0, typeChanged: 0, untracked: 0, conflicted: 0 } }),
   }))
-  assert.ok(text.endsWith('⎇ main'), `实际 ${JSON.stringify(text)}`)
+  assert.ok(text.endsWith('git:(main)'), `实际 ${JSON.stringify(text)}`)
 })
 
 test('胶囊：非仓库、读取中、失败三种状态各有文案', () => {
@@ -3091,7 +3091,7 @@ function sessionOf(cwd) {
 
 test('胶囊：最前面是工作区名（cwd 的目录名），与分支用 `·` 隔开', () => {
   const text = textOf(renderPill())
-  assert.ok(text.startsWith('project · ⎇'), `工作区名要在最前、且带分隔，实际 ${JSON.stringify(text)}`)
+  assert.ok(text.startsWith('project · git:('), `工作区名要在最前、且带分隔，实际 ${JSON.stringify(text)}`)
   assert.equal(findByAttr(renderPill(), 'pill').props.title.includes('/Users/me/project'), true,
     '悬停里仍给完整路径（名字只是短标签）')
 })
@@ -3101,21 +3101,21 @@ test('胶囊：工作区名过长从中间省略，不吃掉分支的位置', ()
   // 注意：胶囊的 cwd 来自 `useSessions` 快照，不是 state —— 要覆盖得走 sessionOf()。
   const text = textOf(renderPill({}, sessionOf(long)))
   assert.ok(text.includes('…'), `要省略，实际 ${JSON.stringify(text)}`)
-  assert.ok(text.endsWith('⎇ main* ↑1 ↓2 M2 A1 ?1'), '分支摘要必须完整')
+  assert.ok(text.endsWith('git:(main*) ↑1 ↓2 M2 A1 ?1'), '分支摘要必须完整')
   const name = text.slice(0, text.indexOf(' · '))
   assert.ok(name.length <= 20, `工作区名不该超过 20 字符，实际 ${name.length}`)
 })
 
 test('胶囊：不是仓库（或还在读取）时也显示工作区名 —— 那是工作区的事，与 git 无关', () => {
   const outside = textOf(renderPill({ status: { repo: null } }))
-  assert.ok(outside.startsWith('project · ⎇'), `非仓库时也要有名字，实际 ${JSON.stringify(outside)}`)
+  assert.ok(outside.startsWith('project · git:('), `非仓库时也要有名字，实际 ${JSON.stringify(outside)}`)
   const loading = textOf(renderPill({ status: null }))
-  assert.ok(loading.startsWith('project · ⎇'), `读取中也一样，实际 ${JSON.stringify(loading)}`)
+  assert.ok(loading.startsWith('project · git:('), `读取中也一样，实际 ${JSON.stringify(loading)}`)
 })
 
 test('胶囊：cwd 为空或就是根目录时，不画名字也不画那个分隔符', () => {
   const none = textOf(renderPill({}, sessionOf(null)))
-  assert.ok(!none.includes(' · ⎇'), `没有 cwd 就别画空名字，实际 ${JSON.stringify(none)}`)
+  assert.ok(!none.includes(' · git:('), `没有 cwd 就别画空名字，实际 ${JSON.stringify(none)}`)
   const root = textOf(renderPill({}, sessionOf('/')))
-  assert.ok(!root.includes(' · ⎇'), `根目录也算不出名字，实际 ${JSON.stringify(root)}`)
+  assert.ok(!root.includes(' · git:('), `根目录也算不出名字，实际 ${JSON.stringify(root)}`)
 })
