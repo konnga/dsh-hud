@@ -2880,3 +2880,19 @@ test('工具胶囊（store）：取回后归一，换会话先清空；宿主不
   assert.equal(store.getSnapshot().tools.active, null)
   assert.equal(store.getSnapshot().tools.total, 0)
 })
+
+test('工具胶囊（诊断）：渲染时留一行现场，能看出"画没画、哪一档"', () => {
+  const bundle = mountClient()
+  const component = bundle.registrations.find(item => item.options.id === 'dsh-hud-tools').component
+  component({
+    t: key => key,
+    now: TOOLS_NOW,
+    store: fakeStore({
+      phase: 'ready',
+      tools: toolsState({ active: { name: 'bash', summary: 'pnpm test', startedAt: TOOLS_NOW - 500 }, total: 7 }),
+    }),
+  })
+  const line = bundle.consoleLines.find(item => item.includes('tools-pill {'))
+  assert.ok(line, `要有渲染现场，实际 ${JSON.stringify(bundle.consoleLines)}`)
+  assert.ok(line.includes('"active":"bash"') && line.includes('"total":7'), line)
+})
