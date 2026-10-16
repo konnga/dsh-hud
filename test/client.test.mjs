@@ -476,8 +476,9 @@ test('apply 装上词典、自有样式与两个轮询定时器（面板状态 /
   assert.ok(styles[0].textContent.includes('.dshh-panel'), '样式表要覆盖自己的类名')
   assert.ok(styles[0].textContent.includes('--dsw-alias-'), '配色走主题令牌')
   assert.ok(labels.includes('dsh-hud: session rows poll'))
-  // 两个节奏：面板 8s（跟着看的），摘要 30s（只在悬停/⋯ 菜单里按需展示，没必要那么勤）。
-  assert.deepEqual(intervals.map(item => item.ms).sort((left, right) => left - right), [8000, 30000])
+  // 三个节拍：面板 8s（跟着看的）、工具活动 3s（宿主是内存读，密一点才看得到"正在跑"）、
+  // 摘要 30s（只在悬停/⋯ 菜单里按需展示，没必要那么勤问 git）。
+  assert.deepEqual(intervals.map(item => item.ms).sort((left, right) => left - right), [3000, 8000, 30000])
   assert.ok(listeners.has('focus'), '需要 focus 时补一次刷新')
 })
 
@@ -2809,15 +2810,27 @@ test('工具胶囊：空闲时报最近一次是谁、本会话一共几次；�
   })
   const okText = textOf(findByAttr(ok, 'tools-pill'))
   assert.ok(okText.includes('✓'), `成功打勾，实际 ${okText}`)
-  assert.ok(okText.includes('bash'))
-  assert.ok(okText.includes('×12'), `要报总次数，实际 ${okText}`)
+  assert.ok(okText.includes('tools.count n=12'), `总次数在前（"bash ×54"会被读成 bash 跑了 54 次），实际 ${okText}`)
+  assert.ok(okText.includes('tools.last name=bash'), `再报最近一次是谁，实际 ${okText}`)
 
   const bad = renderTools({
     tools: toolsState({ recent: [{ name: 'read_file', ok: false, ms: 200, summary: 'src/a.ts' }], total: 3 }),
   })
   const badText = textOf(findByAttr(bad, 'tools-pill'))
   assert.ok(badText.includes('✗'), `失败打叉，实际 ${badText}`)
-  assert.ok(badText.includes('read_file'))
+  assert.ok(badText.includes('name=read_file'), `最近一次是它，实际 ${badText}`)
+
+  // 有几种工具也一起说：不然"只有一个 bash"的疑问只能靠悬停才解开。
+  const many = renderTools({
+    tools: toolsState({
+      recent: [{ name: 'bash', ok: true, ms: 800, summary: 'pnpm test' }],
+      counts: [{ name: 'bash', count: 9 }, { name: 'read_file', count: 3 }],
+      total: 12,
+    }),
+  })
+  const manyText = textOf(findByAttr(many, 'tools-pill'))
+  assert.ok(manyText.includes('tools.lastOfMany') && manyText.includes('kinds=2'),
+    `多种工具时要报出共几种，实际 ${manyText}`)
 })
 
 test('工具胶囊：没跑过工具时那一枚不画，但 Git 胶囊照常在（界面不跳）', () => {
@@ -2989,4 +3002,27 @@ test('侧栏文字摘要：把"旁听到几个"和"现在还有几个"分开说�
   }, {}, { sessionId: 'session-1' })
   const hover = textOf(findByAttr(hoverNode, 'row-hover'))
   assert.ok(hover.includes('n=3') && hover.includes('now=1'), `悬停卡片同样两个数，实际 ${hover}`)
+})
+
+test('工具胶囊（store）：密节拍里内容没变就不 set（3s 一次的无谓重渲染要挡住）', async () => {
+  const bundle = mountClient({
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
+      if (endpoint === 'session-tools') return Promise.resolve({ ok: true, value: {
+        sessionId: 'session-1', tracking: true, active: null,
+        recent: [{ name: 'bash', ok: true, ms: 800, summary: 'pnpm test', at: TOOLS_NOW }],
+        counts: [{ name: 'bash', count: 3 }], total: 3,
+      } })
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+  })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  store.bindSession('session-1', '/Users/me/project')
+  await flush()
+  const first = store.getSnapshot().tools
+  assert.equal(first.total, 3)
+
+  await store.refresh()
+  await flush()
+  assert.equal(store.getSnapshot().tools, first, '内容一样就不该换新对象（否则每 3s 全界面重渲染）')
 })
