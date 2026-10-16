@@ -17,7 +17,8 @@
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "prepublishOnly": "npm test"
+    "prepublishOnly": "npm test && node scripts/check-release.mjs",
+    "tag": "node scripts/check-release.mjs --create"
   },
   "keywords": [
     "dsh",
