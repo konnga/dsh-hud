@@ -2944,10 +2944,17 @@ test('标签列表：点一行 = 用右栏看它指向的那次提交（tag 自�
   assert.deepEqual(opened[0].refs, ['v0.7.1'], '把这个 tag 记进 refs，明细里能看出是从 tag 来的')
 })
 
-test('标签列表：没有 tag 就整段不画；被截断时明说只显示最近几个', () => {
+test('标签列表：没有 tag 时画一行写明（"仓库没有 tag"与"功能没做"必须能区分）；被截断时明说', () => {
   const none = renderPanel({ tags: [] })
-  assert.equal(findAll(none, item => item.props?.['data-tag-row'] !== undefined).length, 0)
-  assert.ok(!textOf(none).includes('panel.tags'), '没有 tag 不该留一个空标题')
+  assert.equal(findAll(none, item => item.props?.['data-tag-row'] !== undefined).length, 0, '一行 tag 也不该有')
+  const emptyNote = findAll(none, item => item.props?.['data-tags-empty'] !== undefined)
+  assert.equal(emptyNote.length, 1, '要写明"还没有标签"（一行 tag 都不画，但话说清楚）')
+  assert.ok(textOf(emptyNote[0]).includes('panel.tagsEmpty'))
+  // 标题也要留着：整段不画的话，功能看起来像没做。
+  assert.ok(findAll(none, item => (item.props?.className || '').includes('dshh-sectionTitle')).length > 0)
+
+  assert.equal(findAll(renderPanel({ tags: null }), item => item.props?.['data-tags-empty'] !== undefined).length, 0,
+    '还没取到数据时先不画，避免闪一下"还没有标签"')
 
   const capped = textOf(renderPanel({ tags: TAG_FIXTURES, tagsTruncated: true }))
   assert.ok(capped.includes('panel.tagsCapped'), '截断了要说清楚')
