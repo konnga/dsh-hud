@@ -405,16 +405,14 @@ test('客户端插件面声明 apply 与三个硬依赖服务', () => {
   assert.deepEqual(exported.inject, ['slots', 'connection', 'locale'])
 })
 
-test('apply 注册五个座位：Git 胶囊、工具胶囊、面板、⋯ 菜单摘要、悬停详情', () => {
+test('apply 注册四个座位：Git 胶囊、面板、⋯ 菜单摘要、悬停详情（工具胶囊与 Git 胶囊同一行）', () => {
   const { registrations } = mountClient()
 
-  assert.equal(registrations.length, 5, '应当注册五条座位')
+  assert.equal(registrations.length, 4, '应当注册四条座位 —— 工具胶囊不是独立注册，否则会另起一整行')
   const byId = Object.fromEntries(registrations.map(entry => [entry.options.id, entry.options]))
   assert.deepEqual(Object.keys(byId).sort(), [
-    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-session-hover', 'dsh-hud-session-menu', 'dsh-hud-tools',
+    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-session-hover', 'dsh-hud-session-menu',
   ])
-  assert.equal(byId['dsh-hud-tools'].name, 'conversation.input.dock', '工具胶囊也在 dock 那一列（各自一行）')
-  assert.ok(byId['dsh-hud-tools'].order > byId['dsh-hud-pill'].order, '排在 Git 胶囊之后')
   assert.equal(byId['dsh-hud-session-menu'].name, 'sidebar.workspaces.session.menu.item', '只读摘要坐在 ⋯ 菜单里')
   assert.equal(byId['dsh-hud-session-hover'].name, 'sidebar.session.row.hover', '详情坐在悬停卡片里')
 
@@ -2778,16 +2776,17 @@ test('⋯ 菜单摘要：非仓库目录也能用（本会话改动与 git 无�
 
 const TOOLS_NOW = 1_700_000_000_000
 
-/** 渲染工具胶囊（`now` 固定，便于断言实时秒数）。 */
+/**
+ * 渲染那一行（Git 胶囊所在的座位），在行内找工具胶囊 —— `now` 固定，便于断言实时秒数。
+ *
+ * 工具胶囊**不是独立座位**：dock 是竖列，独立注册会另起一整行（用户实测过"换行了"）。
+ */
 function renderTools(state = {}, options = {}) {
-  return renderSeat('dsh-hud-tools', {
-    phase: 'ready',
-    sessionId: 'session-1',
-    cwd: '/Users/me/project',
-    status: statusFixture(),
+  return renderPill({
     tools: { phase: 'ready', active: null, recent: [], counts: [], total: 0, updatedAt: TOOLS_NOW },
-  }, state, { now: TOOLS_NOW, ...options })
-}
+    ...state,
+  }, { now: TOOLS_NOW, ...options })
+}{/* 下面的用例统一用 findByAttr(node, 'tools-pill') 取那一枚 */}
 
 function toolsState(overrides = {}) {
   return { phase: 'ready', active: null, recent: [], counts: [], total: 0, updatedAt: TOOLS_NOW, ...overrides }
@@ -2821,9 +2820,11 @@ test('工具胶囊：空闲时报最近一次是谁、本会话一共几次；�
   assert.ok(badText.includes('read_file'))
 })
 
-test('工具胶囊：没跑过工具就整枚不画（空白注册会白占一行）', () => {
-  assert.equal(renderTools({}), null, 'total 0 且没有 active → 不占那一行')
-  assert.equal(renderTools({ tools: toolsState({ phase: 'idle' }) }), null, '还没取到数据时也不画')
+test('工具胶囊：没跑过工具时那一枚不画，但 Git 胶囊照常在（界面不跳）', () => {
+  const node = renderTools({})
+  assert.equal(findByAttr(node, 'tools-pill'), null, 'total 0 且没有 active → 不画这一枚')
+  assert.ok(findByAttr(node, 'pill'), 'Git 胶囊仍然在那一行')
+  assert.equal(findByAttr(renderTools({ tools: toolsState({ phase: 'idle' }) }), 'tools-pill'), null, '还没取到数据时也不画')
 })
 
 test('工具胶囊：悬停给出总次数、各工具次数与最近几条（含耗时与命令摘要）', () => {
@@ -2883,16 +2884,90 @@ test('工具胶囊（store）：取回后归一，换会话先清空；宿主不
 
 test('工具胶囊（诊断）：渲染时留一行现场，能看出"画没画、哪一档"', () => {
   const bundle = mountClient()
-  const component = bundle.registrations.find(item => item.options.id === 'dsh-hud-tools').component
+  const component = bundle.registrations.find(item => item.options.id === 'dsh-hud-pill').component
   component({
     t: key => key,
     now: TOOLS_NOW,
+    sessionId: 'session-1',
+    useSessions: selector => selector({ byId: { 'session-1': { cwd: '/Users/me/project' } } }),
     store: fakeStore({
       phase: 'ready',
+      sessionId: 'session-1',
+      cwd: '/Users/me/project',
+      status: statusFixture(),
       tools: toolsState({ active: { name: 'bash', summary: 'pnpm test', startedAt: TOOLS_NOW - 500 }, total: 7 }),
     }),
   })
   const line = bundle.consoleLines.find(item => item.includes('tools-pill {'))
   assert.ok(line, `要有渲染现场，实际 ${JSON.stringify(bundle.consoleLines)}`)
   assert.ok(line.includes('"active":"bash"') && line.includes('"total":7'), line)
+})
+
+/* ---------------------------------------------------------- 标签列表（面板） */
+
+const TAG_FIXTURES = [
+  { name: 'v0.8.0', sha: 'abc1234', annotated: true, date: '2026-10-16', committedAt: TOOLS_NOW, subject: '这一版加了工具胶囊' },
+  { name: 'v0.7.1', sha: 'def5678', annotated: false, date: '2026-10-15', committedAt: TOOLS_NOW - 86400000, subject: '修好装不上的问题' },
+]
+
+test('标签列表：一行一个（tag 名 + 它指向的提交 sha + 时间），指向 HEAD 的标 HEAD', () => {
+  const node = renderPanel({ tags: TAG_FIXTURES, status: statusFixture({ oid: 'abc1234' }) })
+  const rows = findAll(node, item => item.props?.['data-tag-row'] !== undefined)
+  const texts = rows.map(textOf)
+  assert.equal(rows.length, 2, `两条 tag 两行，实际 ${rows.length}`)
+  assert.ok(texts[0].includes('v0.8.0') && texts[0].includes('abc1234'), texts[0])
+  assert.ok(texts[0].includes('HEAD'), '指向当前 HEAD 的那个要标 HEAD')
+  assert.ok(!texts[1].includes('HEAD'), '另一个不该标')
+})
+
+test('标签列表：点一行 = 用右栏看它指向的那次提交（tag 自己不是提交，所以要填提交信息）', () => {
+  const opened = []
+  const node = renderPanel({ tags: TAG_FIXTURES }, { methods: { toggleCommit: commit => opened.push(commit) } })
+  findAll(node, item => item.props?.['data-tag-row'] !== undefined)[1].props.onClick()
+
+  assert.equal(opened.length, 1, '应当把这次点击交给提交明细那条管道')
+  assert.equal(opened[0].sha, 'def5678', '打开的是 tag 指向的**提交**')
+  assert.equal(opened[0].subject, '修好装不上的问题')
+  assert.deepEqual(opened[0].refs, ['v0.7.1'], '把这个 tag 记进 refs，明细里能看出是从 tag 来的')
+})
+
+test('标签列表：没有 tag 就整段不画；被截断时明说只显示最近几个', () => {
+  const none = renderPanel({ tags: [] })
+  assert.equal(findAll(none, item => item.props?.['data-tag-row'] !== undefined).length, 0)
+  assert.ok(!textOf(none).includes('panel.tags'), '没有 tag 不该留一个空标题')
+
+  const capped = textOf(renderPanel({ tags: TAG_FIXTURES, tagsTruncated: true }))
+  assert.ok(capped.includes('panel.tagsCapped'), '截断了要说清楚')
+})
+
+test('标签列表（store）：面板打开时去取；10s 新鲜度窗口内不重复问 git', async () => {
+  const calls = []
+  const bundle = mountClient({
+    rpc: (channel, endpoint) => {
+      calls.push(endpoint)
+      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture({ oid: 'abc1234' }) })
+      if (endpoint === 'tags') return Promise.resolve({ ok: true, value: { repo: '/Users/me/project', tags: TAG_FIXTURES, truncated: false } })
+      if (endpoint === 'log') return Promise.resolve({ ok: true, value: { commits: [] } })
+      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
+    },
+  })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  store.bindSession('session-1', '/Users/me/project')
+  await flush()
+  const before = calls.filter(name => name === 'tags').length
+  assert.equal(before, 0, '面板没打开时不该问 tag（省一次 for-each-ref）')
+
+  store.togglePanel()
+  await flush()
+  await flush()
+  assert.equal(store.getSnapshot().tags.length, 2, '面板打开后要有 tag')
+  const after = calls.filter(name => name === 'tags').length
+  assert.ok(after >= 1, '面板打开时要取一次')
+
+  store.refreshRows()
+  await flush()
+  await flush()
+  assert.equal(calls.filter(name => name === 'tags').length, after, '10s 内不重复问 git')
+  const line = bundle.consoleLines.find(item => item.includes('tags {'))
+  assert.ok(line && line.includes('"count":2'), `要有现场日志，实际 ${line}`)
 })

@@ -5,7 +5,7 @@ import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
-import { readStatus } from '../lib/index.js'
+import { readStatus, readTags } from '../lib/index.js'
 
 /** 机器上没有 git 就整体跳过（CI 与开发机都装了，但不应因此变红）。 */
 const HAS_GIT = (() => {
@@ -148,5 +148,74 @@ test('未跟踪按"文件"计，不把目录折成一条（与编辑器 / git st
   }
   finally {
     await rm(dir, { recursive: true, force: true })
+  }
+})
+
+/* ---------------------------------------------------------------- 标签列表 */
+
+test('标签列表：附注 tag 显示它指向的提交 sha（不是 tag 对象），轻量 tag 两者相同', { skip: !HAS_GIT && 'git 不可用' }, async () => {
+  const dir = await makeRepo()
+  try {
+    git(dir, ['tag', 'v0.1.0'])                                        // 轻量
+    git(dir, ['tag', '-a', 'v0.2.0', '-m', '第二版：修了几个毛病'])       // 附注
+
+    const { tags, truncated } = await readTags(dir)
+    assert.equal(truncated, false)
+    const byName = Object.fromEntries(tags.map(tag => [tag.name, tag]))
+    assert.deepEqual(Object.keys(byName).sort(), ['v0.1.0', 'v0.2.0'])
+    assert.equal(byName['v0.1.0'].annotated, false)
+    assert.equal(byName['v0.2.0'].annotated, true)
+
+    // 两个 tag 指向同一个提交 → 附注那个也必须给出**同一个提交 sha**（剥一层）。
+    assert.equal(byName['v0.1.0'].sha, byName['v0.2.0'].sha, '附注 tag 要剥一层拿到提交 sha')
+    assert.equal(byName['v0.1.0'].sha.length, 7, '短 sha')
+    assert.equal(byName['v0.2.0'].subject, '第二版：修了几个毛病', '附注 tag 的主题是 tag 说明首行')
+    assert.equal(byName['v0.1.0'].subject, 'init', '轻量 tag 的主题是那次提交的标题')
+    assert.equal(typeof byName['v0.2.0'].committedAt, 'number')
+  }
+  finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('标签列表：最新创建的排在前面，超过上限只报 truncated', { skip: !HAS_GIT && 'git 不可用' }, async () => {
+  const dir = await makeRepo()
+  try {
+    for (const name of ['t1', 't2', 't3']) {
+      await writeFile(path.join(dir, `${name}.txt`), 'x\n')
+      git(dir, ['add', '.'])
+      git(dir, ['commit', '-m', `commit ${name}`])
+      git(dir, ['tag', name])
+    }
+    const all = await readTags(dir)
+    assert.deepEqual(all.tags.map(tag => tag.name), ['t3', 't2', 't1'], '最新的在前')
+
+    const capped = await readTags(dir, 2)
+    assert.deepEqual(capped.tags.map(tag => tag.name), ['t3', 't2'])
+    assert.equal(capped.truncated, true, '还有更多要如实报')
+  }
+  finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('标签列表：一个 tag 都没有 / 不是仓库 / 目录不存在，都不该炸', { skip: !HAS_GIT && 'git 不可用' }, async () => {
+  const dir = await makeRepo()
+  const plain = await mkdtemp(path.join(tmpdir(), 'dsh-hud-plain-'))
+  try {
+    const none = await readTags(dir)
+    assert.deepEqual(none.tags, [], '没有 tag 就是空表')
+    assert.equal(none.truncated, false)
+    assert.ok(none.repo, '仍然报出真实的仓库顶层目录')
+
+    const outside = await readTags(plain)
+    assert.equal(outside.repo, null)
+    assert.deepEqual(outside.tags, [])
+
+    await assert.rejects(() => readTags(path.join(plain, 'does-not-exist')), /cwd does not exist/)
+  }
+  finally {
+    await rm(dir, { recursive: true, force: true })
+    await rm(plain, { recursive: true, force: true })
   }
 })
