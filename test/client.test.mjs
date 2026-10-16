@@ -476,8 +476,8 @@ test('apply 装上词典、自有样式与两个轮询定时器（面板状态 /
   assert.ok(styles[0].textContent.includes('.dshh-panel'), '样式表要覆盖自己的类名')
   assert.ok(styles[0].textContent.includes('--dsw-alias-'), '配色走主题令牌')
   assert.ok(labels.includes('dsh-hud: session rows poll'))
-  // 两个节奏：面板 8s（跟着看的），侧栏摘要 12s（扫一眼的）。
-  assert.deepEqual(intervals.map(item => item.ms).sort((left, right) => left - right), [8000, 12000])
+  // 两个节奏：面板 8s（跟着看的），摘要 30s（只在悬停/⋯ 菜单里按需展示，没必要那么勤）。
+  assert.deepEqual(intervals.map(item => item.ms).sort((left, right) => left - right), [8000, 30000])
   assert.ok(listeners.has('focus'), '需要 focus 时补一次刷新')
 })
 
@@ -2970,4 +2970,23 @@ test('标签列表（store）：面板打开时去取；10s 新鲜度窗口内�
   assert.equal(calls.filter(name => name === 'tags').length, after, '10s 内不重复问 git')
   const line = bundle.consoleLines.find(item => item.includes('tags {'))
   assert.ok(line && line.includes('"count":2'), `要有现场日志，实际 ${line}`)
+})
+
+test('侧栏文字摘要：把"旁听到几个"和"现在还有几个"分开说（同一个词两套口径会让人以为算错）', () => {
+  const rows = {
+    phase: 'ready',
+    unavailable: false,
+    truncated: false,
+    byId: { 'session-1': overviewRow('session-1', { possible: 3, possibleNow: 1 }) },
+  }
+  const menu = textOf(findByAttr(renderMenuSummary({ rows }), 'menu-readout'))
+  assert.ok(menu.includes('rows.possible'), `要出现那句话，实际 ${menu}`)
+  assert.ok(menu.includes('n=3'), `历史总数（3）要说，实际 ${menu}`)
+  assert.ok(menu.includes('now=1'), `其中现在还有差异的（1）也要说，实际 ${menu}`)
+
+  const hoverNode = renderSeat('dsh-hud-session-hover', {
+    phase: 'ready', sessionId: 'session-1', cwd: '/Users/me/project', rows: rows,
+  }, {}, { sessionId: 'session-1' })
+  const hover = textOf(findByAttr(hoverNode, 'row-hover'))
+  assert.ok(hover.includes('n=3') && hover.includes('now=1'), `悬停卡片同样两个数，实际 ${hover}`)
 })

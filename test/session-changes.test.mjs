@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdtemp, rm, writeFile as writeFileAt } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test as nodeTest } from 'node:test'
@@ -657,4 +658,32 @@ test('工具活动：卸载时清空', async () => {
 
   for (const cleanup of bundle.cleanups) cleanup()
   assert.equal((await readTools(bundle, session)).total, 0, '卸载后不该留着上一个进程的工具活动')
+})
+
+test('会话一览：「可能相关」同时报"记录到几个"和"其中几个现在还有差异"', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'dsh-hud-overview3-'))
+  const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+  try {
+    git('init')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'dsh-hud test')
+    await writeFileAt(path.join(dir, 'tracked.ts'), 'a\n')
+    git('add', '.')
+    git('commit', '-m', 'init')
+
+    const bundle = mount({ services: { sessions: fakeHostSessions([{ sessionId: 'session-y', cwd: dir }]) } })
+    // 一条命令改的是**真的被改了**的文件（盘上也改，才会出现在 status 里）；
+    // 另一条只提到一个并不存在、也没被改的路径（`bashCall` 只告诉插件"跑过这条命令"，不执行它）。
+    await writeFileAt(path.join(dir, 'tracked.ts'), 'b\n')
+    bashCall(bundle, 'session-y', 'sed -i s/a/b/ tracked.ts')
+    bashCall(bundle, 'session-y', 'rm gone.ts')
+
+    const value = (await rpcCall(bundle.handler, CHANNEL, 'session-statuses', { args: {} })).value
+    const row = value.sessions[0]
+    assert.equal(row.repo, true, '这是个真仓库')
+    assert.equal(row.possible, 2, '命令旁听到 2 个路径（历史）')
+    assert.equal(row.possibleNow, 1, '其中只有 1 个现在还有差异（现在的）')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
