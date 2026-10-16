@@ -405,21 +405,19 @@ test('客户端插件面声明 apply 与三个硬依赖服务', () => {
   assert.deepEqual(exported.inject, ['slots', 'connection', 'locale'])
 })
 
-test('apply 注册六个座位：胶囊、面板、侧栏三处状态与 ⋯ 菜单摘要', () => {
+test('apply 注册四个座位：胶囊、面板、⋯ 菜单摘要、悬停详情（侧栏行内标记已按设计删除）', () => {
   const { registrations } = mountClient()
 
-  assert.equal(registrations.length, 6, '应当注册六条座位')
+  assert.equal(registrations.length, 4, '应当注册四条座位')
   const byId = Object.fromEntries(registrations.map(entry => [entry.options.id, entry.options]))
   assert.deepEqual(Object.keys(byId).sort(), [
-    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-session-hover', 'dsh-hud-session-leading',
-    'dsh-hud-session-menu', 'dsh-hud-session-status',
+    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-session-hover', 'dsh-hud-session-menu',
   ])
-  assert.equal(byId['dsh-hud-session-leading'].name, 'sidebar.session.row.leading', '常亮标记坐在行首那一格')
   assert.equal(byId['dsh-hud-session-menu'].name, 'sidebar.workspaces.session.menu.item', '只读摘要坐在 ⋯ 菜单里')
+  assert.equal(byId['dsh-hud-session-hover'].name, 'sidebar.session.row.hover', '详情坐在悬停卡片里')
 
   assert.equal(byId['dsh-hud-panel'].name, 'shell.overlay', '面板坐在 root 作用域的浮动层')
   assert.equal(byId['dsh-hud-pill'].name, 'conversation.input.dock', '胶囊坐在会话作用域的 dock 行')
-  assert.equal(byId['dsh-hud-session-status'].name, 'sidebar.workspaces.session.row.action', '行内摘要挂在会话行悬停动作那一组里')
   assert.equal(byId['dsh-hud-session-hover'].name, 'sidebar.session.row.hover', '详情挂在同一个会话行的悬停卡片里')
   for (const options of Object.values(byId)) {
     assert.equal(options.locale, 'dshHud', '每个座位都要拿到本插件的词典')
@@ -2093,7 +2091,7 @@ test('会话归因（面板）：没有归因数据时整列不画，那一行�
   const node = renderPanel({ sessionChanges: { phase: 'idle', files: null, since: null, dropped: 0, errorCode: null } })
   const line = findByAttr(node, 'session')
   assert.ok(line, '那一行要在（它带着三枚开关，不能因为数据没到就消失）')
-  assert.equal(findAll(line, item => item.props?.['data-session-filter']).length, 2, '至少还有"只看本会话改的"与侧栏档位两枚开关')
+  assert.deepEqual(findAll(line, item => item.props?.['data-session-filter']).map(item => item.props['data-session-filter']), ['only'], '只剩"只看本会话改的"这枚（侧栏档位开关随标记一起删了）')
   assert.equal(findAll(node, node2 => node2.props?.['data-session-mark']).length, 0, '也不该乱标"别人的"')
 })
 
@@ -2431,11 +2429,11 @@ test('回合归因（面板）：第二枚开关只在拿得到回合时出现',
     }),
   })
   const toggles = findAll(withTurns, item => item.props?.['data-session-filter'])
-  assert.deepEqual(toggles.map(item => item.props['data-session-filter']), ['only', 'sidebar', 'latest'])
+  assert.deepEqual(toggles.map(item => item.props['data-session-filter']), ['only', 'latest'])
 
   // 拿不到回合：整枚不画（不给一个按不动的按钮）。
   const withoutTurns = renderPanel({ sessionChanges: sessionSlice(['src/a.ts']) })
-  assert.deepEqual(findAll(withoutTurns, item => item.props?.['data-session-filter']).map(item => item.props['data-session-filter']), ['only', 'sidebar'])
+  assert.deepEqual(findAll(withoutTurns, item => item.props?.['data-session-filter']).map(item => item.props['data-session-filter']), ['only'])
 })
 
 test('回合归因（面板）：点"只看最近一轮"就走 store', () => {
@@ -2650,69 +2648,6 @@ function renderRowChip(state = {}, options = {}) {
   }, state, { sessionId: 'session-1', displayTitle: '会话', ...options })
 }
 
-test('侧栏 chip：只有"图标级"宽度 —— 脏标记 + 改动总数 + 本会话改动数', () => {
-  const node = renderRowChip({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1') }, unavailable: false, truncated: false } })
-  const chip = findByAttr(node, 'row-chip')
-  assert.ok(chip, '脏且本会话有改动时要有 chip')
-  const text = textOf(chip)
-  // 那一行只有 32px 高、动作条很窄：只放能立刻下判断的三样，明细退到悬停。
-  assert.ok(text.startsWith('!4'), `脏 + 改动总数（2+1+1=4），实际 ${text}`)
-  assert.ok(text.includes('●3'), `本会话改过几个，实际 ${text}`)
-  assert.ok(!text.includes('M2'), `分类型简写符不进 chip（会被挤掉），实际 ${text}`)
-  assert.ok(String(chip.props.title).includes('count.modified 2'), '明细在悬停里')
-  assert.equal(chip.props['data-dsh-hud'], 'row-chip', '要带自己的标记，别碰产品的类名')
-})
-
-test('侧栏 chip：干净时给一个 ✓（空着和"没做这个功能"长得一样）', () => {
-  const clean = overviewRow('session-1', {
-    dirty: false,
-    counts: { modified: 0, added: 0, deleted: 0, renamed: 0, copied: 0, typeChanged: 0, untracked: 0, conflicted: 0 },
-    mine: 0,
-    possible: 0,
-  })
-  const node = renderRowChip({ rows: { phase: 'ready', byId: { 'session-1': clean }, unavailable: false, truncated: false } })
-  const chip = findByAttr(node, 'row-chip')
-  assert.ok(chip, '干净时也要有东西 —— 常亮/悬停都不该出现"什么都没有"')
-  assert.equal(textOf(chip), '✓')
-})
-
-test('侧栏 chip：只有本会话改动（工作区干净）时也要画 —— 这是别的插件没有的那半信息', () => {
-  const noRepo = overviewRow('session-1', { repo: false, counts: null, mine: 2, possible: 0 })
-  const node = renderRowChip({ rows: { phase: 'ready', byId: { 'session-1': noRepo }, unavailable: false, truncated: false } })
-  const chip = findByAttr(node, 'row-chip')
-  assert.ok(chip, '非仓库但本会话改过文件 → 仍然要显示')
-  assert.ok(textOf(chip).includes('●2'))
-  assert.ok(String(chip.props.title).includes('rows.noRepo'), '悬停要说清它不在仓库里')
-})
-
-test('侧栏 chip：悬停给出分支、上游位置、各类计数与这个会话自己的改动', () => {
-  const node = renderRowChip({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1') }, unavailable: false, truncated: false } })
-  const title = String(findByAttr(node, 'row-chip').props.title)
-  assert.ok(title.includes('main*'), `要有分支与脏标记，实际 ${title}`)
-  assert.ok(title.includes('↑1'), '要有领先数')
-  assert.ok(title.includes('count.modified 2'), '要有分类型计数')
-  assert.ok(title.includes('session.pill'), '要有"本会话改过几个"')
-  assert.ok(title.includes('rows.possible'), '要有"可能相关"那条')
-  assert.ok(title.includes('/Users/me/project'), '要有工作区路径')
-})
-
-test('侧栏 chip：宿主不认这个端点时整片不画（不是画一排"读取失败"）', async () => {
-  const bundle = mountClient({
-    rpc: (channel, endpoint) => {
-      if (endpoint === 'status') return Promise.resolve({ ok: true, value: statusFixture() })
-      return Promise.resolve({ ok: false, error: { details: { code: 'unknown-endpoint' } } })
-    },
-  })
-  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
-  await store.refreshRows()
-
-  const state = store.getSnapshot()
-  assert.equal(state.rows.unavailable, true)
-  assert.deepEqual(state.rows.byId, {})
-  const line = bundle.consoleLines.find(item => item.includes('session-statuses-failed'))
-  assert.ok(line && line.includes('unknown-endpoint'), '要留一行现场')
-})
-
 test('侧栏 chip（store）：一次批量取回并按 sessionId 索引，换会话不用重取', async () => {
   const calls = []
   const bundle = mountClient({
@@ -2736,13 +2671,6 @@ test('侧栏 chip（store）：一次批量取回并按 sessionId 索引，换�
   const rows = store.getSnapshot().rows
   assert.deepEqual(Object.keys(rows.byId).sort(), ['session-1', 'session-2'])
   assert.equal(rows.byId['session-1'].mine, 3)
-})
-
-test('侧栏 chip：定时器会按自己的节奏刷新（12s，页面隐藏时跳过）', () => {
-  const { intervals, labels } = mountClient()
-  assert.ok(labels.includes('dsh-hud: session rows poll'))
-  const rowsTimer = intervals.find(item => item.ms === 12000)
-  assert.ok(rowsTimer, '要有侧栏摘要的定时器')
 })
 
 test('侧栏悬停详情：分支/上游/计数/本会话改动都在；干净时如实说"干净"而不是整块不画', () => {
@@ -2792,109 +2720,6 @@ function renderLeadingToken(state = {}, options = {}) {
   }, state, { sessionId: 'session-1', ...options })
 }
 
-test('侧栏档位（store）：默认常亮，点一下按 常亮 → 悬停 → 关 循环并落盘', async () => {
-  const bundle = mountClient({ rpc: () => Promise.resolve({ ok: true, value: statusFixture() }) })
-  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
-
-  assert.equal(store.getSnapshot().sidebarMode, 'always', '默认常亮 —— "哪个会话脏了"本来就该扫一眼看到')
-  store.cycleSidebarMode()
-  assert.equal(store.getSnapshot().sidebarMode, 'hover')
-  store.cycleSidebarMode()
-  assert.equal(store.getSnapshot().sidebarMode, 'off')
-  store.cycleSidebarMode()
-  assert.equal(store.getSnapshot().sidebarMode, 'always', '循环回来')
-
-  const saved = JSON.parse(bundle.windowStub.localStorage.values.get('dsh-hud.ui.v1'))
-  assert.equal(saved.sidebarMode, 'always')
-})
-
-test('侧栏档位（store）：存档里的怪值一律退回常亮（不因为一个坏值就不显示）', () => {
-  const bundle = mountClient({ rpc: () => Promise.resolve({ ok: true, value: statusFixture() }) })
-  bundle.windowStub.localStorage.values.set('dsh-hud.ui.v1', JSON.stringify({ sidebarMode: 'wat' }))
-  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
-  assert.equal(store.getSnapshot().sidebarMode, 'always')
-})
-
-test('常亮标记：优先报"本会话改过几个"，其次"可能相关"，再次"这个工作区脏"', () => {
-  const withMine = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { mine: 3, possible: 2 }) }, unavailable: false, truncated: false } })
-  const token = findByAttr(withMine, 'row-token')
-  assert.ok(token, '常亮档要有标记')
-  assert.equal(textOf(token), '●3', '本会话改动优先于其它事实')
-  assert.equal(token.props['data-dsh-hud'], 'row-token')
-
-  const onlyPossible = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { mine: 0, possible: 2 }) }, unavailable: false, truncated: false } })
-  assert.equal(textOf(findByAttr(onlyPossible, 'row-token')), '◐2')
-
-  const onlyDirty = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { mine: 0, possible: 0 }) }, unavailable: false, truncated: false } })
-  assert.equal(textOf(findByAttr(onlyDirty, 'row-token')), '!4', '没有本会话改动时报"脏 + 改动总数"')
-})
-
-test('常亮标记：两位数收成 `+`；干净 / 非仓库 / 读取失败各有标记（常亮档永远有东西）', () => {
-  const many = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { mine: 12 }) }, unavailable: false, truncated: false } })
-  assert.equal(textOf(findByAttr(many, 'row-token')), '●+', '两位数收成 +，不把标题挤走')
-
-  const clean = overviewRow('session-1', {
-    dirty: false,
-    counts: { modified: 0, added: 0, deleted: 0, renamed: 0, copied: 0, typeChanged: 0, untracked: 0, conflicted: 0 },
-    mine: 0,
-    possible: 0,
-  })
-  const cleanNode = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': clean }, unavailable: false, truncated: false } })
-  assert.equal(textOf(findByAttr(cleanNode, 'row-token')), '✓', '干净 → ✓')
-
-  const noRepo = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { repo: false, counts: null, mine: 0, possible: 0 }) }, unavailable: false, truncated: false } })
-  assert.equal(textOf(findByAttr(noRepo, 'row-token')), '—', '不在仓库里 → —')
-
-  const broken = renderLeadingToken({ rows: { phase: 'ready', byId: { 'session-1': overviewRow('session-1', { repo: false, counts: null, mine: 0, possible: 0, error: 'git-failed' }) }, unavailable: false, truncated: false } })
-  assert.equal(textOf(findByAttr(broken, 'row-token')), '?', '读取失败 → ?')
-
-  // 没有这个会话的数据才整枚不画（那才是真的没东西可说）。
-  const noData = renderLeadingToken({ rows: { phase: 'ready', byId: {}, unavailable: false, truncated: false } })
-  assert.equal(findByAttr(noData, 'row-token'), null)
-})
-
-test('三档：常亮只在行首画、悬停只在动条画、关了一处都不画', () => {
-  const rows = { phase: 'ready', byId: { 'session-1': overviewRow('session-1') }, unavailable: false, truncated: false }
-
-  // 常亮档：行首有，动条那枚没有。
-  const always = { rows, sidebarMode: 'always' }
-  assert.ok(findByAttr(renderLeadingToken(always), 'row-token'), '常亮档画行首标记')
-  assert.equal(findByAttr(renderRowChip(always), 'row-chip'), null, '常亮档不在动条上重复画')
-
-  // 悬停档：动条有，行首没有。
-  const hover = { rows, sidebarMode: 'hover' }
-  assert.equal(findByAttr(renderLeadingToken(hover), 'row-token'), null, '悬停档不占行首那格')
-  assert.ok(findByAttr(renderRowChip(hover), 'row-chip'), '悬停档画动条那枚')
-
-  // 关：两处都不画。
-  const off = { rows, sidebarMode: 'off' }
-  assert.equal(findByAttr(renderLeadingToken(off), 'row-token'), null)
-  assert.equal(findByAttr(renderRowChip(off), 'row-chip'), null)
-})
-
-test('三档：关掉时悬停卡片里那块详情也一起撤（"不显示"就是一处都不显示）', () => {
-  const rows = { phase: 'ready', byId: { 'session-1': overviewRow('session-1') }, unavailable: false, truncated: false }
-  const shown = renderSeat('dsh-hud-session-hover', { phase: 'ready', cwd: '/Users/me/project', status: statusFixture(), sidebarMode: 'always', rows }, {}, { sessionId: 'session-1' })
-  assert.ok(findByAttr(shown, 'row-hover'), '常亮/悬停档：卡片里有详情')
-
-  const hidden = renderSeat('dsh-hud-session-hover', { phase: 'ready', cwd: '/Users/me/project', status: statusFixture(), sidebarMode: 'off', rows }, {}, { sessionId: 'session-1' })
-  assert.equal(findByAttr(hidden, 'row-hover'), null, '关掉后卡片里也不留')
-})
-
-test('侧栏档位（面板）：那一行有一枚开关显示当前档位，点一下走 store', () => {
-  const cycled = []
-  const node = renderPanel(
-    { sidebarMode: 'hover' },
-    { methods: { cycleSidebarMode: () => cycled.push(true) } },
-  )
-  const toggle = findAll(node, item => item.props?.['data-session-filter'] === 'sidebar')[0]
-  assert.ok(toggle, '面板上要有档位开关')
-  assert.equal(toggle.props['data-sidebar-mode'], 'hover', '显示当前档位')
-  assert.ok(String(toggle.props.title).includes('rows.modeTitle'), '悬停说清这三档怎么循环')
-  toggle.props.onClick()
-  assert.deepEqual(cycled, [true])
-})
-
 /* ------------------------------------------ ⋯ 菜单里的只读摘要（B 方案） */
 
 /** 渲染 ⋯ 菜单里那条摘要。 */
@@ -2934,10 +2759,9 @@ test('⋯ 菜单摘要：干净且本会话没改过时，明说"干净"与"没�
   assert.ok(textOf(readout).includes('rows.ownNone'))
 })
 
-test('⋯ 菜单摘要：受档位控制（关掉就不显示），没有数据也不画', () => {
+test('⋯ 菜单摘要：没有这个会话的数据时整条不画（其余情况照常显示）', () => {
   const rows = { phase: 'ready', byId: { 'session-1': overviewRow('session-1') }, unavailable: false, truncated: false }
-  assert.ok(findByAttr(renderMenuSummary({ rows, sidebarMode: 'off' }), 'menu-readout') === null, '关档时菜单里也不显示')
-  assert.ok(findByAttr(renderMenuSummary({ rows, sidebarMode: 'hover' }), 'menu-readout'), '悬停档也要显示')
+  assert.ok(findByAttr(renderMenuSummary({ rows }), 'menu-readout'), '有数据就显示')
   assert.equal(findByAttr(renderMenuSummary({ rows: { phase: 'ready', byId: {}, unavailable: false, truncated: false } }), 'menu-readout'), null, '没有这个会话的数据时整条不画')
 })
 
