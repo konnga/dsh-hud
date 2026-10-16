@@ -2804,33 +2804,58 @@ test('工具胶囊：正在跑就报工具名与实时秒数（秒数本地算�
   assert.ok(String(pill.props.title).includes('pnpm test'), '并把参数摘要贴出来')
 })
 
-test('工具胶囊：空闲时报最近一次是谁、本会话一共几次；失败打叉', () => {
-  const ok = renderTools({
-    tools: toolsState({ recent: [{ name: 'bash', ok: true, ms: 800, summary: 'pnpm test' }], total: 12 }),
-  })
-  const okText = textOf(findByAttr(ok, 'tools-pill'))
-  assert.ok(okText.includes('✓'), `成功打勾，实际 ${okText}`)
-  assert.ok(okText.includes('tools.count n=12'), `总次数在前（"bash ×54"会被读成 bash 跑了 54 次），实际 ${okText}`)
-  assert.ok(okText.includes('tools.last name=bash'), `再报最近一次是谁，实际 ${okText}`)
-
-  const bad = renderTools({
-    tools: toolsState({ recent: [{ name: 'read_file', ok: false, ms: 200, summary: 'src/a.ts' }], total: 3 }),
-  })
-  const badText = textOf(findByAttr(bad, 'tools-pill'))
-  assert.ok(badText.includes('✗'), `失败打叉，实际 ${badText}`)
-  assert.ok(badText.includes('name=read_file'), `最近一次是它，实际 ${badText}`)
-
-  // 有几种工具也一起说：不然"只有一个 bash"的疑问只能靠悬停才解开。
-  const many = renderTools({
+test('工具胶囊：空闲时把**每个工具各自几次**铺出来（像 codex-hud），每个带自己的 ✓/✗', () => {
+  const node = renderTools({
     tools: toolsState({
-      recent: [{ name: 'bash', ok: true, ms: 800, summary: 'pnpm test' }],
-      counts: [{ name: 'bash', count: 9 }, { name: 'read_file', count: 3 }],
-      total: 12,
+      counts: [
+        { name: 'bash', count: 16, ok: true },
+        { name: 'apply_patch', count: 6, ok: true },
+        { name: 'write_stdin', count: 3, ok: false },
+      ],
+      recent: [{ name: 'write_stdin', ok: false, ms: 200, summary: 'x' }],
+      total: 25,
     }),
   })
-  const manyText = textOf(findByAttr(many, 'tools-pill'))
-  assert.ok(manyText.includes('tools.lastOfMany') && manyText.includes('kinds=2'),
-    `多种工具时要报出共几种，实际 ${manyText}`)
+  const text = textOf(findByAttr(node, 'tools-pill'))
+  assert.ok(text.includes('bash ×16'), `第一个工具的次数要贴在一起，实际 ${text}`)
+  assert.ok(text.includes('apply_patch ×6'), text)
+  assert.ok(text.includes('write_stdin ×3'), text)
+  assert.ok(text.includes('✗'), `最近一次失败的那个工具要打自己的 ✗，实际 ${text}`)
+  assert.ok(text.includes('✓'), '成功的那个打 ✓')
+})
+
+test('工具胶囊：工具多于三个时收成 +k（完整清单在悬停里）', () => {
+  const node = renderTools({
+    tools: toolsState({
+      counts: [
+        { name: 'bash', count: 16, ok: true },
+        { name: 'apply_patch', count: 6, ok: true },
+        { name: 'write_stdin', count: 3, ok: true },
+        { name: 'glob', count: 2, ok: true },
+        { name: 'read_file', count: 1, ok: true },
+      ],
+      total: 28,
+    }),
+  })
+  const text = textOf(findByAttr(node, 'tools-pill'))
+  assert.ok(text.includes('+2'), `只铺三个，其余收成 +2，实际 ${text}`)
+  assert.ok(!text.includes('glob'), '被收起来的工具不该在胶囊上出现')
+  const title = String(findByAttr(node, 'tools-pill').props.title)
+  assert.ok(title.includes('glob ×2'), '但悬停里要给完整清单')
+})
+
+test('工具胶囊：还在跑的时候，读数是"工具名 + 实时秒数"（不铺明细，省地方）', () => {
+  const node = renderTools({
+    tools: toolsState({
+      active: { name: 'bash', summary: 'pnpm test', startedAt: TOOLS_NOW - 1200 },
+      counts: [{ name: 'bash', count: 16, ok: true }],
+      total: 16,
+    }),
+  })
+  const text = textOf(findByAttr(node, 'tools-pill'))
+  assert.ok(text.includes('bash'), text)
+  assert.ok(text.includes('1.2s'), `要有实时秒数，实际 ${text}`)
+  assert.ok(!text.includes('×16'), '跑的时候不铺明细')
 })
 
 test('工具胶囊：没跑过工具时那一枚不画，但 Git 胶囊照常在（界面不跳）', () => {

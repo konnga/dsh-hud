@@ -594,8 +594,20 @@ test('工具活动：按工具名累计次数，并按次数排序', async () =>
     toolCall(bundle, { sessionId: session, name, callId, arguments: { command: 'x' } })
   }
   const value = await readTools(bundle, session)
-  assert.deepEqual(value.counts, [{ name: 'bash', count: 3 }, { name: 'read_file', count: 1 }])
+  assert.deepEqual(value.counts, [
+    { name: 'bash', count: 3, ok: true },
+    { name: 'read_file', count: 1, ok: true },
+  ])
   assert.equal(value.total, 4)
+
+  // 每个工具**各自**最近一次的结果：胶囊上那个 ✓/✗ 用它（没结束过就是 null，不编一个）。
+  toolCall(bundle, { sessionId: session, name: 'read_file', callId: 'c5', result: { ok: false, error: { code: 'boom' } } })
+  toolStart(bundle, { sessionId: session, name: 'glob', callId: 'c6' })
+  const after = await readTools(bundle, session)
+  const byName = Object.fromEntries(after.counts.map(item => [item.name, item.ok]))
+  assert.equal(byName.bash, true)
+  assert.equal(byName.read_file, false, '失败的工具有自己的 ✗')
+  assert.equal(byName.glob, null, '还在跑（或从没结束过）就不给结论')
 })
 
 test('工具活动：参数摘要只认路径/命令类字段，认不出来就留空（不把文件内容贴到界面上）', async () => {
