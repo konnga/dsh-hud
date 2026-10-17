@@ -415,16 +415,17 @@ test('客户端插件面声明 apply 与三个硬依赖服务', () => {
   assert.deepEqual(exported.inject, ['slots', 'connection', 'locale'])
 })
 
-test('apply 注册四个座位：Git 胶囊、面板、⋯ 菜单摘要、悬停详情（工具胶囊与 Git 胶囊同一行）', () => {
+test('apply 注册五个座位：Git 胶囊、面板、轮尾图片条、⋯ 菜单摘要、悬停详情（工具胶囊与 Git 胶囊同一行）', () => {
   const { registrations } = mountClient()
 
-  assert.equal(registrations.length, 4, '应当注册四条座位 —— 工具胶囊不是独立注册，否则会另起一整行')
+  assert.equal(registrations.length, 5, '应当注册五条座位 —— 工具胶囊不是独立注册，否则会另起一整行')
   const byId = Object.fromEntries(registrations.map(entry => [entry.options.id, entry.options]))
   assert.deepEqual(Object.keys(byId).sort(), [
-    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-session-hover', 'dsh-hud-session-menu',
+    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-session-hover', 'dsh-hud-session-menu', 'dsh-hud-turn-images',
   ])
   assert.equal(byId['dsh-hud-session-menu'].name, 'sidebar.workspaces.session.menu.item', '只读摘要坐在 ⋯ 菜单里')
   assert.equal(byId['dsh-hud-session-hover'].name, 'sidebar.session.row.hover', '详情坐在悬停卡片里')
+  assert.equal(byId['dsh-hud-turn-images'].name, 'conversation.chat.turnTail', '轮尾图片条坐在内置改动卡片那条尾巴上')
 
   assert.equal(byId['dsh-hud-panel'].name, 'shell.overlay', '面板坐在 root 作用域的浮动层')
   assert.equal(byId['dsh-hud-pill'].name, 'conversation.input.dock', '胶囊坐在会话作用域的 dock 行')
@@ -1016,8 +1017,10 @@ test('差异视图：未跟踪文件隐藏已暂存页签并给出说明', () =>
 })
 
 test('差异视图：二进制、空、错误、读取中各有文案', () => {
+  // 二进制不再直接给一句文案，而是交给图片预览（静态渲染下停在"读取图片…"）。
   const binary = renderPanel(diffState({ data: diffFixture({ worktree: { rows: [{ kind: 'meta', text: 'Binary files differ', oldLine: null, newLine: null }], additions: 0, deletions: 0, hunks: 0, binary: true, truncated: false } }) }))
-  assert.ok(textOf(binary).includes('diff.binary'))
+  assert.ok(findByAttr(binary, 'image'), '二进制改动要挂到图片预览上')
+  assert.ok(textOf(binary).includes('image.loading'), '取件期间说"读取图片"')
 
   const empty = renderPanel(diffState({ data: diffFixture({ worktree: { rows: [], additions: 0, deletions: 0, hunks: 0, binary: false, truncated: false } }) }))
   assert.ok(textOf(empty).includes('diff.empty'))
@@ -1027,6 +1030,252 @@ test('差异视图：二进制、空、错误、读取中各有文案', () => {
 
   const failed = renderPanel(diffState({ phase: 'error', data: null, errorCode: 'timeout' }))
   assert.ok(textOf(failed).includes('err.timeout'))
+})
+
+const IMAGE_PAIR_VALUE = {
+  repo: '/Users/me/project',
+  path: 'cat.png',
+  origPath: null,
+  side: 'worktree',
+  sha: null,
+  before: { kind: 'image', mime: 'image/png', bytes: 2048, width: 1024, height: 768, base64: 'AAAA' },
+  after: { kind: 'image', mime: 'image/png', bytes: 1000, width: 1024, height: 512, base64: 'BBBB' },
+}
+
+const BINARY_DIFF_VALUE = diffFixture({
+  path: 'cat.png',
+  // 两侧都报二进制：一张图改了尺寸，未暂存与已暂存两枚页签都该能看图。
+  worktree: { rows: [{ kind: 'meta', text: 'Binary files a/cat.png and b/cat.png differ', oldLine: null, newLine: null }], additions: 0, deletions: 0, hunks: 0, binary: true, truncated: false },
+  index: { rows: [{ kind: 'meta', text: 'Binary files a/cat.png and b/cat.png differ', oldLine: null, newLine: null }], additions: 0, deletions: 0, hunks: 0, binary: true, truncated: false },
+})
+
+/** 把面板挂上真 hooks，并让它打开一个二进制改动（图片请求由 rpc stub 回答）。 */
+async function mountBinaryDiff(imageValue) {
+  const mini = createMiniReact()
+  const calls = []
+  const rpc = (channel, endpoint, envelope) => {
+    calls.push({ endpoint, args: envelope && envelope.args })
+    if (endpoint === 'image') return Promise.resolve({ ok: true, value: imageValue })
+    if (endpoint === 'diff') return Promise.resolve({ ok: true, value: BINARY_DIFF_VALUE })
+    return Promise.resolve({ ok: true, value: statusFixture() })
+  }
+  const bundle = mountClient({ ReactImpl: mini.React, rpc })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  store.bindSession('session-1', '/Users/me/project')
+  store.openPanel(true)
+  await store.openDiff({ file: 'cat.png', path: 'cat.png' })
+
+  // 预热缓存：这个假 React 不会为**嵌套**组件跑 effect，所以走"已经取过一次"的渲染路径 ——
+  // 这正好也是真实里"关掉再打开同一张图"的路径（第一帧就该有图，不该再发请求）。
+  const base = { cwd: '/Users/me/project', path: 'cat.png' }
+  await store.loadImagePair({ ...base, side: 'worktree' })
+  await store.loadImagePair({ ...base, side: 'index' })
+
+  mini.mount(bundle.components['dsh-hud-panel'], { t: T, store })
+  await new Promise(resolve => setImmediate(resolve))
+  return { mini, store, calls, tree: () => mini.current() }
+}
+
+test('图片预览：二进制改动画出两侧的图、尺寸变化与字节数，并按当前页签发请求', async () => {
+  const { store, calls, tree } = await mountBinaryDiff(IMAGE_PAIR_VALUE)
+  assert.equal(store.getSnapshot().diff.data.worktree.binary, true, '前提：git 把这条改动报成二进制')
+
+  const images = findAll(tree(), node => node && node.type === 'img')
+  assert.equal(images.length, 2, '并排两张：索引那一版 + 工作区这一版')
+  assert.match(images[0].props.src, /^data:image\/png;base64,/, '图直接用数据 URL 画，不落盘也不外链')
+
+  const text = textOf(tree())
+  assert.ok(text.includes('image.beforeWorktree') && text.includes('image.afterWorktree'), `两侧各有标签，实际 ${text}`)
+  assert.ok(text.includes('image.dimsChanged'), '尺寸变了要一眼看到')
+  assert.ok(text.includes('w=1024 h=768') && text.includes('w=1024 h=512'), `尺寸文案要带具体数字，实际 ${text}`)
+  assert.ok(text.includes('2.0 KB → 1.0 KB'), `字节变化也要报，实际 ${text}`)
+
+  // 预热的两次就是全部请求：组件命中缓存后不该再发（也没发成别的键）。
+  const imageCalls = calls.filter(entry => entry.endpoint === 'image')
+  assert.deepEqual(imageCalls.map(entry => entry.args.side), ['worktree', 'index'], '两个页签各一份缓存，键里必须带侧')
+
+  // 切到「已暂存」：页签换侧后仍然有图（用的是那一侧的缓存）。
+  store.setDiffSide('index')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(findAll(tree(), node => node && node.type === 'img').length, 2, '换侧后照画，不该掉回"读取图片…"')
+})
+
+test('图片预览：认不出的二进制退回原来那句话，并说清是哪一种', async () => {
+  const notImage = await mountBinaryDiff({
+    repo: '/Users/me/project',
+    path: 'cat.png',
+    origPath: null,
+    side: 'worktree',
+    sha: null,
+    before: { kind: 'missing' },
+    after: { kind: 'not-image', bytes: 4096 },
+  })
+  assert.equal(findAll(notImage.tree(), node => node && node.type === 'img').length, 0, '不是图就不该画图')
+  assert.ok(textOf(notImage.tree()).includes('image.notImage'), `要说清"不是可预览的图片"，实际 ${textOf(notImage.tree())}`)
+
+  const tooLarge = await mountBinaryDiff({
+    repo: '/Users/me/project',
+    path: 'cat.png',
+    origPath: null,
+    side: 'worktree',
+    sha: null,
+    before: { kind: 'image', mime: 'image/png', bytes: 100, width: 8, height: 8, base64: 'AAAA' },
+    after: { kind: 'too-large', bytes: 9_000_000, limit: 4 * 1024 * 1024 },
+  })
+  const text = textOf(tooLarge.tree())
+  assert.ok(text.includes('image.tooLarge'), `超上限要说清上限，实际 ${text}`)
+  assert.ok(text.includes('limit=4') && text.includes('size=9.00 MB'), `要带上上限与真实大小，实际 ${text}`)
+  assert.equal(findAll(tooLarge.tree(), node => node && node.type === 'img').length, 1, '另一侧仍然画得出来')
+})
+
+test('图片预览：缩放按钮看得见、点得动；适应宽度 / 100% / 150% / 200% 封顶', async () => {
+  const { store, tree } = await mountBinaryDiff(IMAGE_PAIR_VALUE)
+  // 缩放控件是一组带 key 的子元素（children 是数组），所以用 findAll 而不是 findByAttr。
+  const zoomBtn = key => findAll(tree(), node => node.props && node.props['data-dsh-hud'] === key)[0]
+  const images = () => findAll(tree(), node => node && node.type === 'img')
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+
+  assert.ok(zoomBtn('image-zoom'), '要有一排看得见、点的着的缩放控件（内置那个藏在悬停感应带里）')
+  assert.ok(textOf(tree()).includes('image.fitWidth'), '默认状态是"适应宽度"')
+  assert.equal(images()[0].props.style, undefined, '适应宽度交给 CSS（max-width:100%），不写死宽度')
+
+  // 从适应宽度按 ＋ → 100%（固有宽 1024）：按固有像素算，不用等图片加载。
+  zoomBtn('image-zoom-in').props.onClick()
+  await settle()
+  assert.equal(store.getSnapshot().diff.zoom, 1, '缩放档位住在 store 里（换个文件也记得）')
+  assert.equal(images()[0].props.style.width, '1024px')
+  assert.equal(images()[0].props.style.maxWidth, 'none')
+  assert.ok(textOf(tree()).includes('image.zoomValue'), '数值按钮显示百分比')
+
+  zoomBtn('image-zoom-in').props.onClick()
+  await settle()
+  assert.equal(images()[0].props.style.width, '1536px', '150%')
+
+  zoomBtn('image-zoom-in').props.onClick()
+  await settle()
+  assert.equal(images()[0].props.style.width, '2048px', '200%')
+
+  zoomBtn('image-zoom-in').props.onClick()
+  await settle()
+  assert.equal(images()[0].props.style.width, '2048px', '200% 封顶，再按没反应')
+
+  zoomBtn('image-zoom-out').props.onClick()
+  await settle()
+  assert.equal(images()[0].props.style.width, '1536px', '－ 回到 150%')
+
+  // 点数值按钮 = 回到适应宽度。
+  zoomBtn('image-zoom-value').props.onClick()
+  await settle()
+  assert.equal(store.getSnapshot().diff.zoom, null)
+  assert.equal(images()[0].props.style, undefined, '回到适应宽度')
+  assert.ok(textOf(tree()).includes('image.fitWidth'))
+
+  // 记住：定到 100% 后关掉再打开，还是 100%（与"自动换行"一样落盘）。
+  zoomBtn('image-zoom-in').props.onClick()
+  await settle()
+  store.closeDiff()
+  await store.openDiff({ file: 'cat.png', path: 'cat.png' })
+  assert.equal(store.getSnapshot().diff.zoom, 1, '重新打开还记住缩放档位')
+})
+
+/* ------------------------------------- 轮尾：本轮图片改动（内置卡片旁边那扇门） */
+
+const SESSION_CHANGES_VALUE = {
+  repo: '/Users/me/project',
+  sessionId: 'session-1',
+  tracking: true,
+  since: 1_700_000_000_000,
+  files: [
+    { file: 'assets/cat.png', path: 'assets/cat.png', writes: 2, edits: 0, firstAt: 1, lastAt: 300, lastTurn: 3, turns: [3] },
+    { file: 'src/a.ts', path: 'src/a.ts', writes: 1, edits: 1, firstAt: 1, lastAt: 200, lastTurn: 3, turns: [3] },
+    { file: 'assets/old.png', path: 'assets/old.png', writes: 1, edits: 0, firstAt: 1, lastAt: 100, lastTurn: 2, turns: [2] },
+  ],
+  possible: [
+    // 命令旁听（◐）：脚本/命令产出的图基本都落这一档，所以这一档必须也收。
+    { file: 'assets/from-script.png', path: 'assets/from-script.png', hits: 1, firstAt: 1, lastAt: 400, reason: 'python3 gen.py > assets/from-script.png', lastTurn: 3 },
+    // 同一个文件两档都有：只算一次（确定的优先）。
+    { file: 'assets/cat.png', path: 'assets/cat.png', hits: 1, firstAt: 1, lastAt: 350, reason: 'cp', lastTurn: 3 },
+    { file: 'assets/old-guess.png', path: 'assets/old-guess.png', hits: 1, firstAt: 1, lastAt: 50, reason: 'cp', lastTurn: 2 },
+  ],
+  commands: [],
+  unconfirmed: 0,
+  dropped: 0,
+  possibleDropped: 0,
+}
+
+/** 把轮尾图片条挂上真 hooks：先驱动 store，再预热缩略图，最后挂载组件。 */
+async function mountTurnImages(turn) {
+  const mini = createMiniReact()
+  const opened = []
+  const rpc = (channel, endpoint) => {
+    if (endpoint === 'session-changes') return Promise.resolve({ ok: true, value: SESSION_CHANGES_VALUE })
+    if (endpoint === 'image') return Promise.resolve({ ok: true, value: IMAGE_PAIR_VALUE })
+    return Promise.resolve({ ok: true, value: statusFixture() })
+  }
+  const bundle = mountClient({ ReactImpl: mini.React, rpc })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  store.bindSession('session-1', '/Users/me/project')
+  await store.loadSessionChanges()
+  // 缩略图走的是同一个缓存：预热后第一帧就有图（假 React 不会为嵌套组件跑 effect）。
+  await store.loadImagePair({ cwd: '/Users/me/project', path: 'assets/cat.png', side: 'worktree' })
+  await store.loadImagePair({ cwd: '/Users/me/project', path: 'assets/old.png', side: 'worktree' })
+  await store.loadImagePair({ cwd: '/Users/me/project', path: 'assets/from-script.png', side: 'worktree' })
+
+  const tree = mini.mount(bundle.components['dsh-hud-turn-images'], {
+    t: T,
+    store,
+    sessionId: 'session-1',
+    turn,
+    seq: 42,
+    openFile: path => opened.push(path),
+    useSessions: selector => selector({ byId: { 'session-1': { cwd: '/Users/me/project' } } }),
+  })
+  return { mini, store, tree, opened }
+}
+
+const chipsOf = tree => findAll(tree, node => node.props && node.props['data-dsh-hud'] === 'turn-image')
+
+test('轮尾图片条：只列本轮的图（确定档 + 命令旁听档），点缩略图走内置预览，⇄ 进 hud 看前后对比', async () => {
+  const { store, tree, opened } = await mountTurnImages({ turn: 3 })
+
+  assert.ok(findByAttr(tree, 'turn-images'), '本轮动过图就该有这条')
+  const chips = chipsOf(tree)
+  assert.deepEqual(chips.map(chip => chip.props['data-file']),
+    ['assets/from-script.png', 'assets/cat.png'],
+    '两档都收、最近的在前，且同一个文件只算一次：src/a.ts 不是图，assets/old*.png 属于第 2 轮')
+  assert.deepEqual(chips.map(chip => chip.props['data-tier']), ['possible', 'confirmed'],
+    '命令旁听来的标 ◐，写文件工具改的算确定')
+  assert.equal(findAll(tree, node => node && node.type === 'img').length, 2, '两张都画出缩略图')
+  assert.ok(textOf(tree).includes('turnImages.title'), `标题要说"本轮"，实际 ${textOf(tree)}`)
+
+  // 点缩略图 = 内置预览（槽位给的 openFile），这正是"点了就能看图"。
+  const open = findAll(chips[0], node => node.props && typeof node.props.className === 'string' && node.props.className.includes('dshh-imgstripOpen'))[0]
+  assert.ok(open, '缩略图必须是个按钮')
+  assert.ok(open.props.title.includes('assets/from-script.png') && open.props.title.includes('session.possibleTitle'),
+    `◐ 的悬停要说清是命令旁观来的、并给出那条命令，实际 ${open.props.title}`)
+  open.props.onClick()
+  assert.deepEqual(opened, ['assets/from-script.png'])
+
+  // ⇄ 才进 hud 面板看前后两张。
+  const compare = findAll(chips[0], node => node.props && node.props['data-dsh-hud'] === 'turn-image-compare')[0]
+  compare.props.onClick()
+  const snapshot = store.getSnapshot()
+  assert.equal(snapshot.panelOpen, true, '对比要打开 hud 面板')
+  assert.equal(snapshot.diff.file, 'assets/from-script.png', '并且落在同一个文件的差异上')
+})
+
+test('轮尾图片条：这一轮没动过图就不渲染，不给每条轮尾留空壳', async () => {
+  const { tree } = await mountTurnImages({ turn: 9 })
+  assert.equal(findByAttr(tree, 'turn-images'), null, '整条不渲染')
+  assert.equal(chipsOf(tree).length, 0)
+})
+
+test('轮尾图片条：拿不到回合号时退回"本会话"，而不是整条消失', async () => {
+  const { tree } = await mountTurnImages(undefined)
+  assert.ok(findByAttr(tree, 'turn-images'), '形状变了也要能显示')
+  assert.ok(textOf(tree).includes('turnImages.titleSession'), `标题该说"本会话"，实际 ${textOf(tree)}`)
+  assert.deepEqual(chipsOf(tree).map(chip => chip.props['data-file']).sort(),
+    ['assets/cat.png', 'assets/from-script.png', 'assets/old-guess.png', 'assets/old.png'])
 })
 
 test('差异视图：截断时给出提示', () => {
