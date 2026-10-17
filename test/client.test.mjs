@@ -415,14 +415,17 @@ test('客户端插件面声明 apply 与三个硬依赖服务', () => {
   assert.deepEqual(exported.inject, ['slots', 'connection', 'locale'])
 })
 
-test('apply 注册五个座位：Git 胶囊、面板、轮尾图片条、⋯ 菜单摘要、悬停详情（工具胶囊与 Git 胶囊同一行）', () => {
+test('apply 注册六个座位：Git 胶囊、会话计时胶囊、面板、轮尾图片条、⋯ 菜单摘要、悬停详情', () => {
   const { registrations } = mountClient()
 
-  assert.equal(registrations.length, 5, '应当注册五条座位 —— 工具胶囊不是独立注册，否则会另起一整行')
+  assert.equal(registrations.length, 6, '应当注册六条座位 —— 工具胶囊跟着 Git 胶囊同一行，不另注册')
   const byId = Object.fromEntries(registrations.map(entry => [entry.options.id, entry.options]))
   assert.deepEqual(Object.keys(byId).sort(), [
-    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-session-hover', 'dsh-hud-session-menu', 'dsh-hud-turn-images',
+    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-session-hover', 'dsh-hud-session-menu', 'dsh-hud-session-timer',
+    'dsh-hud-turn-images',
   ])
+  assert.equal(byId['dsh-hud-session-timer'].name, 'conversation.input.dock', '计时胶囊和 Git 胶囊同一行')
+  assert.ok(byId['dsh-hud-session-timer'].order < byId['dsh-hud-pill'].order, '计时排在 Git 胶囊左边（像 codex-hud 把 ⏱ 放行首）')
   assert.equal(byId['dsh-hud-session-menu'].name, 'sidebar.workspaces.session.menu.item', '只读摘要坐在 ⋯ 菜单里')
   assert.equal(byId['dsh-hud-session-hover'].name, 'sidebar.session.row.hover', '详情坐在悬停卡片里')
   assert.equal(byId['dsh-hud-turn-images'].name, 'conversation.chat.turnTail', '轮尾图片条坐在内置改动卡片那条尾巴上')
@@ -1176,6 +1179,69 @@ test('图片预览：缩放按钮看得见、点得动；适应宽度 / 100% / 1
   store.closeDiff()
   await store.openDiff({ file: 'cat.png', path: 'cat.png' })
   assert.equal(store.getSnapshot().diff.zoom, 1, '重新打开还记住缩放档位')
+})
+
+/* ------------------------------------------------- 会话计时胶囊（单独一枚） */
+
+/** 挂上真 hooks 的计时胶囊：rpc 直接回一件 session-time 事实。 */
+async function mountTimer(value) {
+  const mini = createMiniReact()
+  const rpc = (channel, endpoint) => {
+    if (endpoint === 'session-time') return Promise.resolve({ ok: true, value })
+    return Promise.resolve({ ok: true, value: statusFixture() })
+  }
+  const bundle = mountClient({ ReactImpl: mini.React, rpc })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  const tree = mini.mount(bundle.components['dsh-hud-session-timer'], { t: T, store, sessionId: 'session-1' })
+  await new Promise(resolve => setImmediate(resolve))
+  return { tree: () => mini.current(), store }
+}
+
+test('会话计时胶囊：显示挂钟时长（与 codex-hud 同口径与同格式），悬停给出模型/工具与轮次', async () => {
+  const now = Date.now()
+  const { tree } = await mountTimer({
+    available: true,
+    sessionId: 'session-1',
+    createdAt: now - 134 * 60000,            // 2h14m
+    turns: 27, steps: 380, llmMs: 5_355_113, toolMs: 1_389_523,
+    now,
+  })
+
+  const pill = findByAttr(tree(), 'session-timer')
+  assert.ok(pill, '拿得到数据就该有这枚胶囊')
+  const text = textOf(tree())
+  assert.ok(text.includes('⏱'), '要带计时图标')
+  assert.ok(text.includes('2h 14m'), `格式与 codex-hud 一致（2h 14m），实际 ${text}`)
+  assert.ok(pill.props.title.includes('timer.title'), '悬停先说是哪一枚胶囊')
+  assert.ok(pill.props.title.includes('timer.created'), '悬停给出创建时刻')
+  assert.ok(pill.props.title.includes('timer.work'), '悬停给出模型/工具墙钟')
+  assert.ok(pill.props.title.includes('llm=1h 29m') && pill.props.title.includes('tool=23m'),
+    `模型 5,355,113ms→1h 29m、工具 1,389,523ms→23m，实际 ${pill.props.title}`)
+  assert.ok(pill.props.title.includes('timer.turns') && pill.props.title.includes('turns=27'),
+    `悬停给出轮次/步数，实际 ${pill.props.title}`)
+})
+
+test('会话计时胶囊：不足一分钟显示 <1m；拿不到数据时整枚不渲染', async () => {
+  const now = Date.now()
+  const fresh = await mountTimer({ available: true, sessionId: 'session-1', createdAt: now - 30_000, turns: 0, steps: 0, llmMs: 0, toolMs: 0, now })
+  assert.ok(textOf(fresh.tree()).includes('<1m'), `刚开一分钟内要写 <1m，实际 ${textOf(fresh.tree())}`)
+
+  // 会话不在（归档/子会话回收）或宿主缺 sessions 服务：不画，也不留空壳。
+  const gone = await mountTimer({ available: false, sessionId: 'session-1' })
+  assert.equal(findByAttr(gone.tree(), 'session-timer'), null)
+})
+
+test('会话计时胶囊：统计键缺失时只显示挂钟，不编造模型/工具时间', async () => {
+  const now = Date.now()
+  const { tree } = await mountTimer({
+    available: true, sessionId: 'session-1', createdAt: now - 3 * 3600_000,
+    turns: null, steps: null, llmMs: null, toolMs: null, now,
+  })
+  const pill = findByAttr(tree(), 'session-timer')
+  assert.ok(pill, '挂钟还在，胶囊就该在')
+  assert.ok(textOf(tree()).includes('3h'), `3 小时整要显示 3h，实际 ${textOf(tree())}`)
+  assert.ok(!pill.props.title.includes('timer.work'), '没有统计就不提模型/工具 —— 宁缺毋假')
+  assert.ok(!pill.props.title.includes('timer.turns'))
 })
 
 /* ------------------------------------- 轮尾：本轮图片改动（内置卡片旁边那扇门） */
