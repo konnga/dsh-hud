@@ -558,7 +558,7 @@ test('胶囊：简写符各自上色，与面板计数同色', () => {
   const byText = Object.fromEntries(marks.map(mark => [mark.text, mark.color]))
   assert.ok(byText.M2?.includes('state-warn'), `M 应为警告色，实际 ${JSON.stringify(byText)}`)
   assert.ok(byText.A1?.includes('state-success'), 'A 应为成功色')
-  assert.ok(byText['?1']?.includes('label-dimmed'), '? 用 dim（对齐 codex-hud 的 ?→dim）')
+  assert.ok(byText['?1']?.includes('label-secondary'), `? 用次级文字色（label-dimmed 是反相的表面色：浅 1.26:1 / 深 1.64:1，压在面板底色上看不见），实际 ${JSON.stringify(byText['?1'])}`)
 })
 
 test('胶囊：悬停给出完整信息（路径、上游、各类型计数）', () => {
