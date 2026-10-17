@@ -1,6 +1,6 @@
 {
   "name": "@konnga/dsh-hud",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "DeepSeek Harness 的只读工作区 Git 面板：分支、ahead/behind、改动清单与差异，外加「这个会话改过哪些文件、审到哪了、跑了什么工具」。A read-only workspace Git panel for DeepSeek Harness — branch, changed files, diffs, plus per-session change attribution, review progress, and tool activity.",
   "type": "module",
   "main": "lib/index.js",
