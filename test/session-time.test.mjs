@@ -73,6 +73,24 @@ test('会话时长：投影键缺失（没装 session-stats）时仍给挂钟，
   done()
 })
 
+test('会话时长：注入被别的挂载实例卸载清掉时，按契约用 ctx.get 兜底', (t, done) => {
+  const session = fakeSession('session-1', Date.now() - 60_000)
+  const stats = { turns: 1, steps: 1, llmMs: 1, toolMs: 1 }
+  const first = mountWithSession(session, stats)
+  assert.equal(readSessionTime('session-1').available, true, '前提：正常情况下可取')
+
+  // 模块级软依赖 + 每个挂载各自 return 清理 —— 第二个实例卸载会把值清成 null，
+  // 而第一个实例仍在服务（HMR 反复重载、或宿主挂了多个实例时就会这样）。
+  const second = mountWithSession(session, stats)
+  second.cleanups.forEach(fn => fn())
+  const after = readSessionTime('session-1')
+  assert.equal(after.available, true, '兜底生效：服务还在，就不该因为别的实例卸载而失明')
+  assert.equal(after.createdAt, session.header.createdAt)
+
+  first.cleanups.forEach(fn => fn())
+  done()
+})
+
 test('端点：session-time 走 RPC 能取到，非法 sessionId 不炸', (t, done) => {
   const created = Date.now() - 3600_000
   const { handler } = mountWithSession(fakeSession('session-1', created), { turns: 5, steps: 9, llmMs: 1000, toolMs: 2000 })

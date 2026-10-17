@@ -22,7 +22,11 @@ export function mount(options = {}) {
       return cleanup
     },
     get(name) {
-      return name === 'connection' ? connection : undefined
+      if (name === 'connection') return connection
+      // 真实 ctx.get 会按 Service 名取；这里同样解析 options.services，
+      // 好让"注入没到齐、改用 ctx.get 兜底"这条路径能被测到。
+      const provided = options.services ?? {}
+      return provided[name]
     },
     // 动态注入：真实 Cordis 里 `ctx.inject(deps, cb)` 起一个带 inject 的子 fiber ——
     // 全部依赖到齐才回调，缺一个就永远不回调。宿主半的软依赖（例如 `sessionProjections`）
