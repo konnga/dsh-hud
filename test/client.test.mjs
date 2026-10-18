@@ -1172,7 +1172,7 @@ function renderTimerPill(sessionValue) {
   })
 }
 
-test('计时胶囊：画在 Git 那一行里、排在它前面，显示挂钟时长与悬停明细', () => {
+test('计时胶囊：画在 Git 那一行里、排在最后，显示挂钟时长与悬停明细', () => {
   const now = Date.now()
   const node = renderTimerPill({
     available: true, sessionId: 'session-1', createdAt: now - 134 * 60000,   // 2h14m
@@ -1188,12 +1188,12 @@ test('计时胶囊：画在 Git 那一行里、排在它前面，显示挂钟时
     `模型 5,355,113ms→1h 29m、工具 1,389,523ms→23m，实际 ${pill.props.title}`)
   assert.ok(pill.props.title.includes('turns=27'), `悬停给出轮次/步数，实际 ${pill.props.title}`)
 
-  // dock 是竖列：计时必须在**同一条注册**里、且排在 Git 胶囊之前（codex-hud 把 ⏱ 放行首）。
+  // dock 是竖列：计时必须在**同一条注册**里、且排在最后（这次用例里没有工具，所以是 Git 之后）。
   const dock = findByAttr(node, 'dock')
   assert.ok(dock, 'dock 行要存在')
-  const inked = findAll(dock, entry => entry.props && entry.props['data-dsh-hud'] === 'session-timer' || (entry.props && entry.props['data-dsh-hud'] === 'pill'))
-  assert.deepEqual(inked.map(entry => entry.props['data-dsh-hud']), ['session-timer', 'pill'],
-    `计时排在 Git 之前，实际 ${JSON.stringify(inked.map(entry => entry.props['data-dsh-hud']))}`)
+  const inked = findAll(dock, entry => entry.props && (entry.props['data-dsh-hud'] === 'session-timer' || entry.props['data-dsh-hud'] === 'pill'))
+  assert.deepEqual(inked.map(entry => entry.props['data-dsh-hud']), ['pill', 'session-timer'],
+    `计时排在最后，实际 ${JSON.stringify(inked.map(entry => entry.props['data-dsh-hud']))}`)
 })
 
 test('计时胶囊：不足一分钟显示 <1m；不可用与"没有统计"时各自的克制', () => {
