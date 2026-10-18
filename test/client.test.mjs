@@ -1192,9 +1192,10 @@ async function mountTimer(value) {
   }
   const bundle = mountClient({ ReactImpl: mini.React, rpc })
   const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  const before = bundle.intervals.length
   const tree = mini.mount(bundle.components['dsh-hud-session-timer'], { t: T, store, sessionId: 'session-1' })
   await new Promise(resolve => setImmediate(resolve))
-  return { tree: () => mini.current(), store }
+  return { tree: () => mini.current(), store, addedIntervals: () => bundle.intervals.slice(before).map(item => item.ms) }
 }
 
 test('会话计时胶囊：显示挂钟时长（与 codex-hud 同口径与同格式），悬停给出模型/工具与轮次', async () => {
@@ -1229,6 +1230,51 @@ test('会话计时胶囊：不足一分钟显示 <1m；拿不到数据时整枚�
   // 会话不在（归档/子会话回收）或宿主缺 sessions 服务：不画，也不留空壳。
   const gone = await mountTimer({ available: false, sessionId: 'session-1' })
   assert.equal(findByAttr(gone.tree(), 'session-timer'), null)
+})
+
+test('会话计时：开机那一下问不到（会话还没恢复进存储）时，负面答案只记 3 秒', async () => {
+  const mini = createMiniReact()
+  let calls = 0
+  let payload = { available: false, sessionId: 'session-1' }
+  const bundle = mountClient({
+    ReactImpl: mini.React,
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'session-time') {
+        calls += 1
+        return Promise.resolve({ ok: true, value: payload })
+      }
+      return Promise.resolve({ ok: true, value: statusFixture() })
+    },
+  })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+
+  assert.equal((await store.loadSessionTime('session-1')).available, false)
+  assert.equal((await store.loadSessionTime('session-1')).available, false)
+  assert.equal(calls, 1, '3 秒内的连问复用负面结果，不把宿主打爆')
+
+  // 实测：启动后头几百毫秒 live=0，约 30 秒后会话才进存储 —— 过了重问间隔必须真的再问。
+  payload = { available: true, sessionId: 'session-1', createdAt: Date.now() - 60000, turns: 3, steps: 9, llmMs: 1000, toolMs: 2000, now: Date.now() }
+  const realNow = Date.now
+  Date.now = () => realNow() + 4000
+  try {
+    const value = await store.loadSessionTime('session-1')
+    assert.equal(value.available, true, '过了重问间隔要真的再问一次')
+    assert.equal(calls, 2)
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('会话计时：没拿到数据时用 3 秒节奏重问，拿到后回到 60 秒', async () => {
+  const now = Date.now()
+  const { addedIntervals } = await mountTimer({ available: false, sessionId: 'session-1' })
+  assert.deepEqual(addedIntervals().sort((a, b) => a - b), [3000, 4000], '没数据：3 秒重问 + 4 秒跳钟')
+
+  const ready = await mountTimer({
+    available: true, sessionId: 'session-1', createdAt: now - 45 * 60000,
+    turns: 32, steps: 420, llmMs: 8_045_192, toolMs: 1_500_000, now,
+  })
+  assert.ok(ready.addedIntervals().includes(60000), `拿到数据后要换成 60 秒一轮，实际 ${JSON.stringify(ready.addedIntervals())}`)
 })
 
 test('会话计时胶囊：统计键缺失时只显示挂钟，不编造模型/工具时间', async () => {
