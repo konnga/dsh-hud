@@ -834,23 +834,44 @@ test('交互：在头部按下并移动才拖动，松开时落盘', () => {
 test('交互：Esc 收起面板，且在捕获阶段监听（焦点在任何输入框里也能收到）', () => {
   const { bundle, calls } = mountPanel()
   const entries = bundle.listeners.get('keydown') ?? []
-  assert.equal(entries.length, 1, '应注册一个 keydown 监听')
-  assert.equal(entries[0].opts, true, '必须用捕获阶段')
+  assert.equal(entries.length, 2, '两条：输入框 ↑ 召回（apply 时）+ 面板（挂载时）')
 
-  entries[0].listener({ key: 'Escape' })
+  const panel = entries[entries.length - 1]
+  assert.equal(panel.opts, true, '必须用捕获阶段')
+
+  panel.listener({ key: 'Escape' })
   assert.deepEqual(calls.openPanel, [false])
 
-  entries[0].listener({ key: 'a' })
+  panel.listener({ key: 'a' })
   assert.deepEqual(calls.openPanel, [false], '其他按键不关面板')
 })
 
 test('交互：面板收起时不注册任何面板级监听', () => {
   const { bundle } = mountPanel({ panelOpen: false })
-  assert.equal(bundle.listeners.has('keydown'), false)
+  const keydowns = bundle.listeners.get('keydown') ?? []
+  assert.equal(keydowns.length, 1, '只剩输入框 ↑ 召回那一条 —— 面板收起时它自己不注册')
   assert.equal(bundle.listeners.has('pointermove'), false)
+
+  // 而剩下那条对"不在输入框里"的按键完全不介入 —— 这就是"面板收起时按键照常"的含义。
+  const event = keyEvent('ArrowUp', { target: fakeNode() })
+  keydowns[0].listener(event)
+  assert.equal(event.prevented, undefined)
 })
 
 /* ---------------------------------------------------- 差异视图（diff） */
+
+/**
+ * 面板那条 keydown 监听。
+ *
+ * 插件现在有**两条** keydown 监听：输入框 `↑` 召回（`apply` 时注册，最早）与面板
+ * （面板挂载时注册，最晚）。这里取**最后一条**，并顺手把"两条都在、顺序如此"钉住 ——
+ * 将来谁挪动了注册次序，这几条键盘用例会立刻报错，而不是悄悄测错对象。
+ */
+function panelKeydown(bundle) {
+  const keydowns = bundle.listeners.get('keydown') ?? []
+  assert.equal(keydowns.length, 2, `应当两条 keydown 监听（输入框召回 + 面板），实际 ${keydowns.length}`)
+  return keydowns[keydowns.length - 1].listener
+}
 
 /** 按谓词收集节点（会展开函数组件，因此子组件也参与断言）。 */
 function findAll(node, predicate, depth = 0, out = []) {
@@ -1161,6 +1182,144 @@ test('图片预览：缩放按钮看得见、点得动；适应宽度 / 100% / 1
   await store.openDiff({ file: 'cat.png', path: 'cat.png' })
   assert.equal(store.getSnapshot().diff.zoom, 1, '重新打开还记住缩放档位')
 })
+
+/* ------------------------------------------------- 输入框 ↑ 召回（纯文本历史） */
+
+/**
+ * 造一个"输入框 + 历史"的现场：
+ * · 假的 Lexical 根节点（`data-lexical-editor="true"`，文本放 `textContent`）；
+ * · 假的 Selection/Range —— 只建模"光标在同一个文本节点里的偏移"，够断言召回与光标；
+ * · rpc 桩回 `prompt-history`，由 store 写进快照（按键那侧只读快照）。
+ */
+async function mountComposerRecall(prompts = ['第二句', '第一句']) {
+  const mini = createMiniReact()
+  const bundle = mountClient({
+    ReactImpl: mini.React,
+    rpc: (channel, endpoint) => {
+      if (endpoint === 'prompt-history') return Promise.resolve({ ok: true, value: { available: true, sessionId: 'session-1', prompts } })
+      if (endpoint === 'session-time') return Promise.resolve({ ok: true, value: { available: false } })
+      return Promise.resolve({ ok: true, value: statusFixture() })
+    },
+  })
+
+  let caret = 0
+  const root = {
+    textContent: '',
+    get innerText() { return this.textContent },
+    getAttribute: name => (name === 'data-lexical-editor' ? 'true' : null),
+    parentElement: null,
+    dispatchEvent: () => true,
+  }
+  const selection = {
+    rangeCount: 1,
+    isCollapsed: true,
+    focusNode: root,
+    get focusOffset() { return caret },
+    removeAllRanges() {},
+    addRange() {},
+  }
+  const range = {
+    selectNodeContents() {},
+    cloneRange() { return this },
+    setEnd: (node, offset) => { caret = offset },
+    collapse: atStart => { caret = atStart ? 0 : root.textContent.length },
+    toString: () => root.textContent.slice(0, caret),
+  }
+  bundle.windowStub.getSelection = () => selection
+  bundle.documentStub.createRange = () => range
+
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  await store.loadPromptHistory('session-1')
+
+  const keydown = (bundle.listeners.get('keydown') ?? [])[0].listener
+  const press = (key, options = {}) => {
+    const event = {
+      key,
+      target: options.target === undefined ? root : options.target,
+      altKey: options.altKey === true,
+      ctrlKey: options.ctrlKey === true,
+      metaKey: false,
+      isComposing: options.isComposing === true,
+      prevented: undefined,
+      preventDefault() { this.prevented = true },
+      stopPropagation() {},
+    }
+    keydown(event)
+    return event
+  }
+  return { bundle, store, root, press, setCaret: value => { caret = value }, getCaret: () => caret }
+}
+
+test('输入框 ↑ 召回：空输入框里按 ↑ 带出上一条，连按往回翻，到最旧就放手', async () => {
+  const { press, root, getCaret } = await mountComposerRecall(['第二句', '第一句'])
+
+  const first = press('ArrowUp')
+  assert.equal(first.prevented, true, '接管了才拦默认行为')
+  assert.equal(root.textContent, '第二句', '先是最新一条')
+  assert.equal(getCaret(), 0, '往旧翻时光标放开头（与 OpenCode 一致）')
+
+  const second = press('ArrowUp')
+  assert.equal(second.prevented, true)
+  assert.equal(root.textContent, '第一句', '再往回一条')
+
+  const third = press('ArrowUp')
+  assert.equal(third.prevented, undefined, '已经到最旧：把 ↑ 还给编辑器')
+  assert.equal(root.textContent, '第一句', '内容不动')
+})
+
+test('输入框 ↑ 召回：输入框非空时不接管（多行草稿里的 ↑ 永远只是移动光标）', async () => {
+  const { press, root } = await mountComposerRecall()
+  root.textContent = '我写了一半'
+  const event = press('ArrowUp')
+  assert.equal(event.prevented, undefined, '非空输入框不接管')
+  assert.equal(root.textContent, '我写了一半', '一个字都不动')
+})
+
+test('输入框 ↑ 召回：翻进历史后用 ↓ 回到最新，再 ↓ 回到空（进历史前的位置）', async () => {
+  const { press, root } = await mountComposerRecall(['第二句', '第一句'])
+  press('ArrowUp')
+  press('ArrowUp')                                   // 到最旧
+  assert.equal(root.textContent, '第一句')
+
+  const back = press('ArrowDown')
+  assert.equal(back.prevented, true)
+  assert.equal(root.textContent, '第二句', '往回翻是新的一条')
+
+  const toDraft = press('ArrowDown')
+  assert.equal(toDraft.prevented, true)
+  assert.equal(root.textContent, '', '回到进历史前的空草稿')
+  assert.equal(press('ArrowDown').prevented, undefined, '已经不在历史里：↓ 不接管')
+})
+
+test('输入框 ↑ 召回：不是输入框、带修饰键、输入法组合中，一律完全不介入', async () => {
+  const { press, root } = await mountComposerRecall()
+  const elsewhere = { getAttribute: () => null, parentElement: null }
+  assert.equal(press('ArrowUp', { target: elsewhere }).prevented, undefined, '别处按键不碰')
+  assert.equal(press('ArrowUp', { altKey: true }).prevented, undefined, '带修饰键让路')
+  assert.equal(press('ArrowUp', { ctrlKey: true }).prevented, undefined, '带 Ctrl 让路')
+  assert.equal(press('ArrowUp', { isComposing: true }).prevented, undefined, '输入法组合中让路')
+  assert.equal(press('ArrowRight').prevented, undefined, '不是 ↑/↓ 不碰')
+  assert.equal(root.textContent, '', '以上都不该写入任何内容')
+})
+
+test('输入框 ↑ 召回：拿不到历史（宿主没装 turnOutline 投影）时静默不启用', async () => {
+  const mini = createMiniReact()
+  const bundle = mountClient({
+    ReactImpl: mini.React,
+    rpc: (channel, endpoint) => Promise.resolve({ ok: true, value: endpoint === 'prompt-history' ? { available: false, sessionId: 'session-1', prompts: [] } : statusFixture() }),
+  })
+  const root = { textContent: '', get innerText() { return this.textContent }, getAttribute: () => 'true', parentElement: null, dispatchEvent: () => true }
+  bundle.windowStub.getSelection = () => ({ rangeCount: 1, isCollapsed: true, focusNode: root, focusOffset: 0, removeAllRanges() {}, addRange() {} })
+  bundle.documentStub.createRange = () => ({ selectNodeContents() {}, cloneRange() { return this }, setEnd() {}, collapse() {}, toString: () => '' })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+  await store.loadPromptHistory('session-1')
+
+  const event = { key: 'ArrowUp', target: root, prevented: undefined, preventDefault() { this.prevented = true }, stopPropagation() {} }
+  ;(bundle.listeners.get('keydown') ?? [])[0].listener(event)
+  assert.equal(event.prevented, undefined, '没有历史就不该接管')
+  assert.equal(root.textContent, '')
+})
+
 
 /* ------------------------------------------- 会话计时胶囊（dock 行最左一枚） */
 
@@ -2165,7 +2324,7 @@ function mountArmedPanel(state = {}, options = {}) {
 
 test('键盘：没在面板里点过就不接管按键（打字、翻菜单、滚会话都不受影响）', () => {
   const { bundle, calls } = mountPanel({ diff: diffState().diff })
-  const keydown = bundle.listeners.get('keydown')?.[0]?.listener
+  const keydown = panelKeydown(bundle)
 
   const event = keyEvent('ArrowDown', { target: fakeNode() })
   keydown(event)
@@ -2179,7 +2338,7 @@ test('键盘：没在面板里点过就不接管按键（打字、翻菜单、�
 
 test('键盘：在面板里点过之后 ↑/↓ 选行、Enter 打开、[/] 移动并打开', () => {
   const { bundle, calls } = mountArmedPanel({ diff: diffState().diff })
-  const keydown = bundle.listeners.get('keydown')?.[0]?.listener
+  const keydown = panelKeydown(bundle)
   const press = (key, extra = {}) => {
     const event = keyEvent(key, extra)
     keydown(event)
@@ -2211,7 +2370,7 @@ test('键盘：在面板里点过之后 ↑/↓ 选行、Enter 打开、[/] 移�
 
 test('键盘：Space 折叠当前 hunk；带修饰键与输入中的按键都不碰', () => {
   const { bundle, calls } = mountArmedPanel({ diff: diffState({ hunk: 2 }).diff })
-  const keydown = bundle.listeners.get('keydown')?.[0]?.listener
+  const keydown = panelKeydown(bundle)
 
   keydown(keyEvent(' '))
   assert.deepEqual(calls.toggleHunk, [2], 'Space 作用于当前 hunk')
@@ -2231,7 +2390,7 @@ test('键盘：Space 折叠当前 hunk；带修饰键与输入中的按键都不
 
 test('键盘：Tab 进面板也算激活（activeElement 在面板里）', () => {
   const { bundle, calls } = mountPanel({ diff: diffState().diff })
-  const keydown = bundle.listeners.get('keydown')[0].listener
+  const keydown = panelKeydown(bundle)
 
   bundle.documentStub.activeElement = fakeNode('panel')
   keydown(keyEvent('n'))
@@ -2251,7 +2410,7 @@ test('键盘：面板收起时连指针监听都不注册', () => {
 
 test('工作台：Esc 是"退一层"——先关差异，再按才收起面板', () => {
   const { bundle, calls } = mountPanel({ diff: diffState().diff })
-  const keydown = bundle.listeners.get('keydown')?.[0]?.listener
+  const keydown = panelKeydown(bundle)
   assert.equal(typeof keydown, 'function')
 
   keydown({ key: 'Escape' })
@@ -2265,7 +2424,7 @@ test('工作台：Esc 是"退一层"——先关差异，再按才收起面板',
 test('提交明细：Esc 退一层——先收起右栏，再按才收起面板', () => {
   // 提交明细（右栏 = 明细，里面装着差异）：一次 Esc 把整块明细收掉。
   const detail = mountPanel(commitDiffState())
-  const keydown = detail.bundle.listeners.get('keydown')?.[0]?.listener
+  const keydown = panelKeydown(detail.bundle)
   keydown({ key: 'Escape' })
   assert.equal(detail.calls.closeDetail, 1, '右栏整体退掉')
   assert.equal(detail.calls.closeCommit, 1, 'closeDetail 在提交明细在场时退的是明细')
@@ -2273,13 +2432,13 @@ test('提交明细：Esc 退一层——先收起右栏，再按才收起面板'
 
   // 只有工作区差异：退的是差异。
   const worktree = mountPanel({ diff: diffState().diff })
-  worktree.bundle.listeners.get('keydown')[0].listener({ key: 'Escape' })
+  panelKeydown(worktree.bundle)({ key: 'Escape' })
   assert.equal(worktree.calls.closeDetail, 1)
   assert.equal(worktree.calls.closeDiff, 1)
 
   // 右栏什么都不在场：才收起面板。
   const plain = mountPanel({ diff: null, commit: null })
-  plain.bundle.listeners.get('keydown')[0].listener({ key: 'Escape' })
+  panelKeydown(plain.bundle)({ key: 'Escape' })
   assert.deepEqual(plain.calls.openPanel, [false])
 })
 
@@ -2985,7 +3144,7 @@ test('审阅进度（键盘）：v 标记当前聚焦的那一行', () => {
     { cursor: 'src/a.ts', status: reviewStatus({ 'src/a.ts': '1.1', 'new file.txt': '2.2' }) },
     { methods: { toggleReviewed: file => marked.push(file) } },
   )
-  const keydown = bundle.listeners.get('keydown')?.[0]?.listener
+  const keydown = panelKeydown(bundle)
   const event = keyEvent('v')
   keydown(event)
 
