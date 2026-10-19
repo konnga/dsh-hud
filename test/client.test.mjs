@@ -1267,6 +1267,14 @@ test('输入框 ↑ 召回：空输入框里按 ↑ 带出上一条，连按往�
   assert.equal(root.textContent, '第一句', '内容不动')
 })
 
+test('输入框 ↑ 召回：Lexical 空框里的那个换行不算内容（否则整条路会静默失效）', async () => {
+  const { press, root } = await mountComposerRecall(['第二句', '第一句'])
+  root.textContent = '\n'                       // `<p><br></p>` 的 innerText 就长这样
+  const event = press('ArrowUp')
+  assert.equal(event.prevented, true, '空框判定要吞掉末尾空白')
+  assert.equal(root.textContent, '第二句')
+})
+
 test('输入框 ↑ 召回：输入框非空时不接管（多行草稿里的 ↑ 永远只是移动光标）', async () => {
   const { press, root } = await mountComposerRecall()
   root.textContent = '我写了一半'
