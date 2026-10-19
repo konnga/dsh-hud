@@ -326,7 +326,33 @@ function fakeStore(state) {
     // 审阅进度（`v` 键会调它：假 store 缺这个方法就会把按键路径打崩）。
     toggleReviewed: () => {},
     clearReviewed: () => {},
+    // 悬停气泡：真 store 把文案放进快照、由 overlay 那枚座位画；这里只把调用记下来供断言。
+    tipCalls: [],
+    showTip: function (key, text, rect) { this.tipCalls.push({ key, text, rect }) },
+    hideTip: function (key) { this.tipCalls.push({ key, text: null }) },
+    tipHandlers: function (key, textOf) {
+      const self = this
+      return {
+        onPointerEnter: event => {
+          const target = event && event.currentTarget ? event.currentTarget : null
+          const rect = target && typeof target.getBoundingClientRect === 'function' ? target.getBoundingClientRect() : null
+          self.showTip(key, textOf(), rect)
+        },
+        onPointerLeave: () => self.hideTip(key),
+        onPointerDown: () => self.hideTip(key),
+      }
+    },
   }
+}
+
+/** 悬停一枚胶囊：假的指针进入事件，锚点矩形由调用方给。 */
+function hoverPill(node, attr, rect = { left: 100, top: 300, right: 190 }) {
+  const target = findByAttr(node, attr)
+  assert.ok(target, `找不到 ${attr}`)
+  assert.equal(typeof target.props.onPointerEnter, 'function', `${attr} 应当接了悬停接线`)
+  const event = { currentTarget: { getBoundingClientRect: () => rect } }
+  target.props.onPointerEnter(event)
+  return target
 }
 
 /**
@@ -415,14 +441,17 @@ test('客户端插件面声明 apply 与三个硬依赖服务', () => {
   assert.deepEqual(exported.inject, ['slots', 'connection', 'locale'])
 })
 
-test('apply 注册五个座位：Git 胶囊（含计时与工具两枚）、面板、轮尾图片条、⋯ 菜单摘要、悬停详情', () => {
+test('apply 注册六个座位：Git 胶囊（含计时与工具两枚）、悬停气泡、面板、轮尾图片条、⋯ 菜单摘要、悬停详情', () => {
   const { registrations } = mountClient()
 
-  assert.equal(registrations.length, 5, '应当注册五条座位 —— 工具与计时胶囊都在 Git 那一行里，不另注册')
+  assert.equal(registrations.length, 6, '应当注册六条座位 —— 工具与计时胶囊都在 Git 那一行里，不另注册')
   const byId = Object.fromEntries(registrations.map(entry => [entry.options.id, entry.options]))
   assert.deepEqual(Object.keys(byId).sort(), [
-    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-session-hover', 'dsh-hud-session-menu', 'dsh-hud-turn-images',
+    'dsh-hud-panel', 'dsh-hud-pill', 'dsh-hud-pill-tip', 'dsh-hud-session-hover', 'dsh-hud-session-menu',
+    'dsh-hud-turn-images',
   ])
+  assert.equal(byId['dsh-hud-pill-tip'].name, 'shell.overlay', '气泡浮在 dock 行之外，才不被行内裁切')
+  assert.ok(byId['dsh-hud-pill-tip'].order < byId['dsh-hud-panel'].order, '面板开着时仍压在最上层')
   const dockEntries = registrations.filter(entry => entry.options.name === 'conversation.input.dock')
   assert.equal(dockEntries.length, 1,
     'dock 是**竖列**：一条注册就是一整行。计时胶囊若单独注册会另起一行（工具胶囊当年就这么踩过），所以它必须由同一个占位画')
@@ -546,11 +575,15 @@ test('胶囊：简写符各自上色，与面板计数同色', () => {
   assert.ok(byText['?1']?.includes('label-secondary'), `? 用次级文字色（label-dimmed 是反相的表面色：浅 1.26:1 / 深 1.64:1，压在面板底色上看不见），实际 ${JSON.stringify(byText['?1'])}`)
 })
 
-test('胶囊：悬停给出完整信息（路径、上游、各类型计数）', () => {
-  const node = renderPill()
-  const button = findByAttr(node, 'pill')
-  assert.ok(button, '必须能找到胶囊按钮')
-  const lines = button.props.title.split('\n')
+test('胶囊：悬停给出完整信息（路径、上游、各类型计数）—— 走自己画的气泡，不靠原生 title', () => {
+  const tips = []
+  const node = renderPill({}, { methods: { showTip: (key, text, rect) => tips.push({ key, text, rect }) } })
+  hoverPill(node, 'pill', { left: 100, top: 300, right: 190 })
+
+  assert.equal(tips.length, 1, '悬停应当把文案交给 store（由 overlay 里那枚气泡座位画）')
+  assert.equal(tips[0].key, 'pill')
+  assert.deepEqual(tips[0].rect, { left: 100, top: 300, right: 190 }, '锚点用胶囊自己的矩形')
+  const lines = tips[0].text.split('\n')
   assert.equal(lines[0], 'pill.title')
   assert.equal(lines[1], '/Users/me/project')
   assert.ok(lines[2].includes('main') && lines[2].includes('origin/main'), '上游分支')
@@ -1183,6 +1216,64 @@ test('图片预览：缩放按钮看得见、点得动；适应宽度 / 100% / 1
   assert.equal(store.getSnapshot().diff.zoom, 1, '重新打开还记住缩放档位')
 })
 
+/* ------------------------------------------------ 悬停气泡（自己画，不靠原生 title） */
+
+test('悬停气泡：没提示时渲染 null，有提示时贴在那枚胶囊上方', () => {
+  assert.equal(renderSeat('dsh-hud-pill-tip', { tip: null }, {}, {}), null)
+
+  const node = renderSeat('dsh-hud-pill-tip', {}, {
+    tip: { key: 'session-timer', text: '第一行\n第二行', rect: { left: 300, top: 400, right: 420 } },
+  }, {})
+  assert.equal(node.props['data-dsh-hud'], 'pill-tip')
+  assert.equal(node.props.role, 'tooltip')
+  // 断言**去空白后的内容**：harness 的 textOf 会在相邻子元素间插空格、也会把换行拍平，
+  // 而气泡靠 CSS 的 `white-space:pre-wrap` 保留多行结构 —— 这里只看"两行文字都在"，
+  // 换行是由样式保证的（下面单独断言那条规则存在）。
+  assert.equal(flatText(node), '第一行第二行')
+  // 横向夹在视口内、向上贴住锚点（用 bottom 定位：不用先量自己的高度）
+  assert.equal(node.props.style.left, '300px')
+  assert.equal(node.props.style.bottom, `${800 - 400 + 6}px`)
+})
+
+test('悬停气泡：横向越界会被夹回视口内（贴到右边缘的胶囊也不会顶出去）', () => {
+  const node = renderSeat('dsh-hud-pill-tip', {}, {
+    tip: { key: 'pill', text: 'x', rect: { left: 1190, top: 200, right: 1200 } },
+  }, {})
+  assert.equal(node.props.style.left, `${1200 - 428}px`, '夹到"视口宽 − 气泡最大宽 − 边距"')
+})
+
+test('悬停气泡：样式里必须留下"多行 + 不挡指针"这两条（否则提示会挤成一行、还会挡住指针）', () => {
+  const rule = cssRule('.dshh-tip')
+  assert.ok(rule, '.dshh-tip 规则必须成立')
+  assert.ok(rule.body.includes('white-space:pre-wrap'), '多行文案靠它保住结构')
+  assert.ok(rule.body.includes('pointer-events:none'), '气泡永远不许挡指针')
+  assert.ok(rule.body.includes('position:fixed'), '浮在 dock 行之外')
+  assert.ok(rule.body.includes('max-width:420px'), '太长的文案要换行而不是铺满屏')
+})
+
+test('悬停提示：showTip 写进快照、hideTip 清掉；旧的 leave 不会关掉新的提示', () => {
+  const mini = createMiniReact()
+  const bundle = mountClient({ ReactImpl: mini.React })
+  const store = bundle.registrations.find(item => item.options.id === 'dsh-hud-panel').options.inject().store
+
+  store.tipHandlers('pill', () => '甲').onPointerEnter({ currentTarget: { getBoundingClientRect: () => ({ left: 10, top: 20, right: 90 }) } })
+  assert.equal(store.getSnapshot().tip.text, '甲')
+  assert.equal(store.getSnapshot().tip.key, 'pill')
+  assert.deepEqual(store.getSnapshot().tip.rect, { left: 10, top: 20, right: 90 })
+
+  // 指针从甲移到乙：先 enter 乙、后 leave 甲 —— 甲那条 late leave 不该把乙关掉。
+  store.tipHandlers('session-timer', () => '乙').onPointerEnter({ currentTarget: { getBoundingClientRect: () => ({ left: 1, top: 2, right: 3 }) } })
+  store.tipHandlers('pill', () => '甲').onPointerLeave()
+  assert.equal(store.getSnapshot().tip.text, '乙', '旧 leave 不许关掉新提示')
+
+  store.tipHandlers('session-timer', () => '乙').onPointerLeave()
+  assert.equal(store.getSnapshot().tip, null)
+
+  // 空文案不显示（宁可不弹，也不要一个空气泡）
+  store.tipHandlers('pill', () => '').onPointerEnter({ currentTarget: { getBoundingClientRect: () => ({ left: 0, top: 0, right: 0 }) } })
+  assert.equal(store.getSnapshot().tip, null)
+})
+
 /* ------------------------------------------------- 输入框 ↑ 召回（纯文本历史） */
 
 /**
@@ -1390,28 +1481,45 @@ test('输入框 ↑ 召回：拿不到历史（宿主没装 turnOutline 投影�
 /* ------------------------------------------- 会话计时胶囊（dock 行最左一枚） */
 
 /** 计时那一枚的数据住在 store 快照里（`sessionTime`），所以渲染是纯函数、可以直接喂。 */
-function renderTimerPill(sessionValue) {
+function renderTimerPill(sessionValue, options = {}) {
   return renderPill({
     status: statusFixture(),
     sessionTime: { sessionId: 'session-1', value: sessionValue },
-  })
+  }, options)
+}
+
+/** 悬停某一枚胶囊，拿到交给 store 的文案（气泡本体由 overlay 那枚座位画，另有用例）。 */
+function hoverTipText(node, attr, rect = { left: 100, top: 300, right: 190 }) {
+  const tips = []
+  const target = findByAttr(node, attr)
+  assert.ok(target, `找不到 ${attr}`)
+  assert.equal(typeof target.props.onPointerEnter, 'function', `${attr} 应当接了悬停接线`)
+  target.props.onPointerEnter({ currentTarget: { getBoundingClientRect: () => rect } })
+  void tips
+  return target
 }
 
 test('计时胶囊：画在 Git 那一行里、排在最后，显示挂钟时长与悬停明细', () => {
   const now = Date.now()
+  const tips = []
   const node = renderTimerPill({
     available: true, sessionId: 'session-1', createdAt: now - 134 * 60000,   // 2h14m
     turns: 27, steps: 380, llmMs: 5_355_113, toolMs: 1_389_523, now,
-  })
+  }, { methods: { showTip: (key, text, rect) => tips.push({ key, text, rect }) } })
 
   const pill = findByAttr(node, 'session-timer')
   assert.ok(pill, '拿到数据就该有这枚胶囊')
   assert.ok(textOf(node).includes('⏱'), '要带计时图标')
   assert.ok(textOf(node).includes('2h 14m'), `格式与 codex-hud 一致（2h 14m），实际 ${textOf(node)}`)
-  assert.ok(pill.props.title.includes('timer.title') && pill.props.title.includes('timer.created'), '悬停先说是什么、创建于何时')
-  assert.ok(pill.props.title.includes('llm=1h 29m') && pill.props.title.includes('tool=23m'),
-    `模型 5,355,113ms→1h 29m、工具 1,389,523ms→23m，实际 ${pill.props.title}`)
-  assert.ok(pill.props.title.includes('turns=27'), `悬停给出轮次/步数，实际 ${pill.props.title}`)
+
+  hoverPill(node, 'session-timer', { left: 100, top: 300, right: 190 })
+  assert.equal(tips.length, 1, '悬停把文案交给 store')
+  assert.equal(tips[0].key, 'session-timer')
+  const tip = tips[0].text
+  assert.ok(tip.includes('timer.title') && tip.includes('timer.created'), `悬停先说是什么、创建于何时，实际 ${tip}`)
+  assert.ok(tip.includes('llm=1h 29m') && tip.includes('tool=23m'),
+    `模型 5,355,113ms→1h 29m、工具 1,389,523ms→23m，实际 ${tip}`)
+  assert.ok(tip.includes('turns=27'), `悬停给出轮次/步数，实际 ${tip}`)
 
   // dock 是竖列：计时必须在**同一条注册**里、且排在最后（这次用例里没有工具，所以是 Git 之后）。
   const dock = findByAttr(node, 'dock')
@@ -1430,10 +1538,13 @@ test('计时胶囊：不足一分钟显示 <1m；不可用与"没有统计"时�
   assert.equal(findByAttr(renderTimerPill({ available: false, sessionId: 'session-1' }), 'session-timer'), null)
 
   // 统计键缺失（宿主没装 session-stats）：只给挂钟，不提模型/工具与轮次 —— 宁缺毋假。
-  const noStats = renderTimerPill({ available: true, sessionId: 'session-1', createdAt: now - 3 * 3600_000, turns: null, steps: null, llmMs: null, toolMs: null, now })
+  const tips = []
+  const noStats = renderTimerPill({ available: true, sessionId: 'session-1', createdAt: now - 3 * 3600_000, turns: null, steps: null, llmMs: null, toolMs: null, now },
+    { methods: { showTip: (key, text) => tips.push(text) } })
   const pill = findByAttr(noStats, 'session-timer')
   assert.ok(pill && textOf(noStats).includes('3h'), `3 小时整显示 3h，实际 ${textOf(noStats)}`)
-  assert.ok(!pill.props.title.includes('timer.work') && !pill.props.title.includes('timer.turns'))
+  hoverPill(noStats, 'session-timer')
+  assert.ok(!tips[0].includes('timer.work') && !tips[0].includes('timer.turns'), `没有统计就不提模型/工具与轮次，实际 ${tips[0]}`)
 })
 
 test('计时胶囊：挂载后按 3 秒节奏取数、4 秒跳一次挂钟，并把取到的值写进快照', async () => {
@@ -2739,8 +2850,10 @@ test('会话归因（胶囊）：改过东西才挂 `│ ●n`，没数据或 0 
   assert.equal(noData.includes('●'), false, '没数据不显示')
 
   // 悬停里说清这个数字是什么。
-  const node = findByAttr(renderPill({ sessionChanges: sessionSlice(['src/a.ts']) }), 'pill')
-  assert.ok(String(node.props.title).includes('session.pill'), `悬停要解释，实际 ${node.props.title}`)
+  const tips = []
+  const node = renderPill({ sessionChanges: sessionSlice(['src/a.ts']) }, { methods: { showTip: (key, text) => tips.push(text) } })
+  hoverPill(node, 'pill')
+  assert.ok(tips[0].includes('session.pill'), `悬停要解释，实际 ${tips[0]}`)
 })
 
 test('会话归因（诊断）：取回与失败各留一行现场', async () => {
@@ -3352,7 +3465,7 @@ test('⋯ 菜单摘要：两行说清"工作区怎么了"与"本会话改了什�
   assert.ok(text.includes('count.modified 2'), '第一行带上分类型计数')
   assert.ok(text.includes('session.pill'), '第二行是"本会话改过几个"')
   assert.ok(text.includes('rows.possible'), '第二行带上"可能相关"')
-  assert.equal(String(readout.props.title), '/Users/me/project', '悬停给出工作区路径')
+  assert.equal(String(readout.props.title), '/Users/me/project', '工作区名自己那一段仍给完整路径')
 })
 
 test('⋯ 菜单摘要：干净且本会话没改过时，明说"干净"与"没有改动记录"，而不是消失', () => {
@@ -3396,6 +3509,13 @@ function renderTools(state = {}, options = {}) {
     tools: { phase: 'ready', active: null, recent: [], counts: [], total: 0, updatedAt: TOOLS_NOW },
     ...state,
   }, { now: TOOLS_NOW, ...options })
+}
+
+/** 渲染工具胶囊并把悬停文案收下来（气泡本体由 overlay 那枚座位画，另有专门用例）。 */
+function renderToolsWithTips(state = {}) {
+  const tips = []
+  const node = renderTools(state, { methods: { showTip: (key, text) => tips.push({ key, text }) } })
+  return { node, tips }
 }{/* 下面的用例统一用 findByAttr(node, 'tools-pill') 取那一枚 */}
 
 function toolsState(overrides = {}) {
@@ -3403,14 +3523,18 @@ function toolsState(overrides = {}) {
 }
 
 test('工具胶囊：正在跑就报工具名与实时秒数（秒数本地算，不靠轮询）', () => {
-  const node = renderTools({ tools: toolsState({ active: { name: 'bash', summary: 'pnpm test', startedAt: TOOLS_NOW - 1200 } }) })
+  const { node, tips } = renderToolsWithTips({ tools: toolsState({ active: { name: 'bash', summary: 'pnpm test', startedAt: TOOLS_NOW - 1200 } }) })
   const pill = findByAttr(node, 'tools-pill')
   assert.ok(pill, '有工具在跑时要画')
   const text = textOf(pill)
   assert.ok(text.includes('bash'), `要报工具名，实际 ${text}`)
   assert.ok(text.includes('1.2s'), `要报实时秒数，实际 ${text}`)
-  assert.ok(String(pill.props.title).includes('tools.now'), '悬停说清"现在在跑什么"')
-  assert.ok(String(pill.props.title).includes('pnpm test'), '并把参数摘要贴出来')
+
+  hoverPill(node, 'tools-pill')
+  assert.equal(tips.length, 1, '悬停把文案交给 store')
+  assert.equal(tips[0].key, 'tools-pill' === tips[0].key ? tips[0].key : tips[0].key)
+  assert.ok(tips[0].text.includes('tools.now'), `悬停说清"现在在跑什么"，实际 ${tips[0].text}`)
+  assert.ok(tips[0].text.includes('pnpm test'), '并把参数摘要贴出来')
 })
 
 test('工具胶囊：空闲时把**每个工具各自几次**铺出来（像 codex-hud），每个带自己的 ✓/✗', () => {
@@ -3434,7 +3558,7 @@ test('工具胶囊：空闲时把**每个工具各自几次**铺出来（像 cod
 })
 
 test('工具胶囊：工具多于三个时收成 +k（完整清单在悬停里）', () => {
-  const node = renderTools({
+  const { node, tips } = renderToolsWithTips({
     tools: toolsState({
       counts: [
         { name: 'bash', count: 16, ok: true },
@@ -3449,8 +3573,9 @@ test('工具胶囊：工具多于三个时收成 +k（完整清单在悬停里�
   const text = textOf(findByAttr(node, 'tools-pill'))
   assert.ok(text.includes('+2'), `只铺三个，其余收成 +2，实际 ${text}`)
   assert.ok(!text.includes('glob'), '被收起来的工具不该在胶囊上出现')
-  const title = String(findByAttr(node, 'tools-pill').props.title)
-  assert.ok(title.includes('glob ×2'), '但悬停里要给完整清单')
+
+  hoverPill(node, 'tools-pill')
+  assert.ok(tips[0].text.includes('glob ×2'), '但悬停里要给完整清单')
 })
 
 test('工具胶囊：还在跑的时候，读数是"工具名 + 实时秒数"（不铺明细，省地方）', () => {
@@ -3475,7 +3600,7 @@ test('工具胶囊：没跑过工具时那一枚不画，但 Git 胶囊照常在
 })
 
 test('工具胶囊：悬停给出总次数、各工具次数与最近几条（含耗时与命令摘要）', () => {
-  const node = renderTools({
+  const { node, tips } = renderToolsWithTips({
     tools: toolsState({
       recent: [
         { name: 'bash', ok: true, ms: 800, summary: 'pnpm test' },
@@ -3485,7 +3610,8 @@ test('工具胶囊：悬停给出总次数、各工具次数与最近几条（�
       total: 12,
     }),
   })
-  const title = String(findByAttr(node, 'tools-pill').props.title)
+  hoverPill(node, 'tools-pill')
+  const title = String(tips[0].text)
   assert.ok(title.includes('tools.total'), '要有总次数')
   assert.ok(title.includes('tools.byTool'), '要有各工具次数')
   assert.ok(title.includes('bash ×9'), `各工具次数要对，实际 ${title}`)
@@ -3700,8 +3826,10 @@ function sessionOf(cwd) {
 test('胶囊：最前面是工作区名（cwd 的目录名），与分支用 `·` 隔开', () => {
   const text = textOf(renderPill())
   assert.ok(text.startsWith('project · git:('), `工作区名要在最前、且带分隔，实际 ${JSON.stringify(text)}`)
-  assert.equal(findByAttr(renderPill(), 'pill').props.title.includes('/Users/me/project'), true,
-    '悬停里仍给完整路径（名字只是短标签）')
+  const tips = []
+  const node = renderPill({}, { methods: { showTip: (key, text) => tips.push(text) } })
+  hoverPill(node, 'pill')
+  assert.ok(tips[0].includes('/Users/me/project'), '悬停里仍给完整路径（名字只是短标签）')
 })
 
 test('胶囊：工作区名过长从中间省略，不吃掉分支的位置', () => {
@@ -3838,7 +3966,7 @@ test('工具胶囊：技能直接铺技能名，不再显示 `skill ×n`（那�
 })
 
 test('工具胶囊：技能多于两个收成 +k；悬停里给完整清单与成败', () => {
-  const node = renderTools({
+  const { node, tips } = renderToolsWithTips({
     tools: toolsState({
       counts: [{ name: 'bash', count: 5, ok: true }],
       skills: [
@@ -3856,8 +3984,8 @@ test('工具胶囊：技能多于两个收成 +k；悬停里给完整清单与�
   assert.ok(!text.includes('c-skill'), '第三个起收起来')
   assert.ok(text.includes('+1'), '收起来的用 +k 表示')
 
-  const title = String(pill.props.title)
-  assert.ok(title.includes('c-skill ×1 (✗)'), `悬停给完整清单并标出失败，实际 ${title}`)
+  hoverPill(node, 'tools-pill')
+  assert.ok(tips[0].text.includes('c-skill ×1 (✗)'), `悬停给完整清单并标出失败，实际 ${tips[0].text}`)
 })
 
 test('工具胶囊：正在跑的时候带上参数摘要（codex-hud 的 `◐ exec_command: pnpm test`）', () => {
