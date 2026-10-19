@@ -13,6 +13,7 @@
     "lib",
     "cordis.patch.yml",
     "README.md",
+    "README.en.md",
     "LICENSE",
     "docs/images"
   ],
@@ -33,7 +34,15 @@
     "review",
     "sidebar",
     "floating-panel",
-    "web-gui"
+    "web-gui",
+    "deepseek",
+    "diff",
+    "image-diff",
+    "session-timer",
+    "prompt-history",
+    "review-progress",
+    "tool-activity",
+    "dock"
   ],
   "license": "MIT",
   "author": "konnga",
