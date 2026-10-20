@@ -31,7 +31,7 @@ description:
 | **仓库创建满 1 天** | 2026-10-16 建 → **10-17 之后**才过 |
 | 仓库加了 `dsh-plugin` topic | ✓ 2026-10-16 已加 |
 | `@deepseek-ai/*` 用 `peerDependencies` | ✓ 6 个客户端包都是 optional peer |
-| 已发布 npm（可选；只影响下载量数字） | ✓ 0.9.1 |
+| 已发布 npm（可选；只影响下载量数字） | ✓ 0.9.2 |
 | `screenshots.json` 放在**本仓库**（可选，市场详情页用） | ✓ 四张：`docs/images/capsules.webp`、`panel.webp`、`turn-images.webp`、`image-diff.webp` |
 
 ## 市场卡片上的标签从哪来（两处，都在**别人仓库**里）
