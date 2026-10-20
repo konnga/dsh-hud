@@ -4,15 +4,20 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
-import { CHANNEL, MAX_IMAGE_BYTES, readImagePair, readImageSize, sniffImageMime } from '../lib/index.js'
+import {
+  CHANNEL,
+  MAX_IMAGE_BYTES,
+  readImagePair,
+  readImageSize,
+  sniffImageMime,
+} from '../lib/host/index.js'
 import { mount, rpcCall } from './helpers.mjs'
 
 const HAS_GIT = (() => {
   try {
     execFileSync('git', ['--version'], { stdio: 'ignore' })
     return true
-  }
-  catch {
+  } catch {
     return false
   }
 })()
@@ -83,7 +88,11 @@ test('认图：按内容而不是扩展名（含"头不够长"与乱码都不认
   assert.equal(sniffImageMime(webp(2, 3)), 'image/webp')
   assert.equal(sniffImageMime(bmp(2, 3)), 'image/bmp')
   assert.equal(sniffImageMime(Buffer.from('not an image at all')), null)
-  assert.equal(sniffImageMime(Buffer.from([0x89, 0x50])), null, '短于 12 字节不认（避免拿半个签名下结论）')
+  assert.equal(
+    sniffImageMime(Buffer.from([0x89, 0x50])),
+    null,
+    '短于 12 字节不认（避免拿半个签名下结论）',
+  )
   assert.equal(sniffImageMime('text'), null, '非 Buffer 不认')
 })
 
@@ -145,8 +154,7 @@ test('图片改动：两侧都拿到字节 + 像素尺寸，且二进制没被�
     assert.equal(staged.before.mime, 'image/png')
     assert.ok(Buffer.from(staged.before.base64, 'base64').equals(before))
     assert.ok(Buffer.from(staged.after.base64, 'base64').equals(before), '没暂存时索引 == HEAD')
-  }
-  finally {
+  } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
@@ -167,8 +175,7 @@ test('图片改动：提交明细按"第一父提交 → 该提交"取两侧', {
     assert.equal(pair.sha, sha)
     assert.deepEqual([pair.before.width, pair.before.height], [10, 10])
     assert.deepEqual([pair.after.width, pair.after.height], [20, 20])
-  }
-  finally {
+  } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
@@ -177,7 +184,10 @@ test('图片改动：非图片、缺失、超上限各自回报，不抛也不�
   const { dir, git } = await repo()
   try {
     await writeFile(path.join(dir, 'notes.txt'), 'hello\n')
-    await writeFile(path.join(dir, 'blob.bin'), Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b]))
+    await writeFile(
+      path.join(dir, 'blob.bin'),
+      Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b]),
+    )
     git('add', 'notes.txt', 'blob.bin')
     git('commit', '-qm', 'add')
 
@@ -197,8 +207,7 @@ test('图片改动：非图片、缺失、超上限各自回报，不抛也不�
     assert.equal(tooLarge.after.kind, 'too-large')
     assert.equal(tooLarge.after.bytes, big.length)
     assert.equal(tooLarge.after.base64, undefined, '超限不把内容塞进 JSON')
-  }
-  finally {
+  } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
@@ -215,19 +224,24 @@ test('端点：image 走 RPC 能取到两侧，非法入参被挡在门外', { s
     assert.deepEqual([ok.value.after.width, ok.value.after.height], [64, 32])
     assert.equal(ok.value.before.kind, 'missing', '未跟踪文件没有基线')
 
-    const absolute = await rpcCall(handler, CHANNEL, 'image', { args: { cwd: dir, path: '/etc/passwd' } })
+    const absolute = await rpcCall(handler, CHANNEL, 'image', {
+      args: { cwd: dir, path: '/etc/passwd' },
+    })
     assert.equal(absolute.ok, false)
     assert.equal(absolute.error.details.code, 'invalid-path')
 
-    const escape = await rpcCall(handler, CHANNEL, 'image', { args: { cwd: dir, path: '../outside.png' } })
+    const escape = await rpcCall(handler, CHANNEL, 'image', {
+      args: { cwd: dir, path: '../outside.png' },
+    })
     assert.equal(escape.ok, false)
     assert.equal(escape.error.details.code, 'invalid-path')
 
-    const badSha = await rpcCall(handler, CHANNEL, 'image', { args: { cwd: dir, path: 'cat.png', sha: 'not a sha' } })
+    const badSha = await rpcCall(handler, CHANNEL, 'image', {
+      args: { cwd: dir, path: 'cat.png', sha: 'not a sha' },
+    })
     assert.equal(badSha.ok, false)
     assert.equal(badSha.error.details.code, 'invalid-sha')
-  }
-  finally {
+  } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })

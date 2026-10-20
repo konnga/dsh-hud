@@ -3,7 +3,7 @@
 # `name` 必须是**真实的包名**（改名时这里漏改过一次，结果整个插件加载不起来：插入找不到模块，
 # 组合树里就没有这条，界面上一片空白）。
 #
-# 宿主半（lib/index.js）在自己的 `ctx.webServer` 上注册 `/dsh-hud-rpc` 前缀路由，
+# 宿主半（源码 src/host/index.ts，产物 lib/host/index.js）在自己的 `ctx.webServer` 上注册 `/dsh-hud-rpc` 前缀路由，
 # 收发与 `/api` 相同的 Connection RPC 信封，并用 `connection.requestRejection`
 # 复用 Host/Origin + 浏览器会话围栏；浏览器半（lib/client.js，一个 dsh.client 行）
 # 通过 `ctx.connection.rpc.call("/dsh-hud-rpc", endpoint, { args })` 取数。

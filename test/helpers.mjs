@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { CHANNEL, apply } from '../lib/index.js'
+import { CHANNEL, apply } from '../lib/host/index.js'
 
 /**
  * 用假 ctx 挂载宿主半，捕获它注册的路由与 effect 标签。
@@ -33,8 +33,8 @@ export function mount(options = {}) {
     // 就是靠这个语义"有则用、无则不算"。
     inject(deps, callback) {
       const provided = options.services ?? {}
-      if (deps.some(name => provided[name] === undefined)) return () => {}
-      const dispose = callback({ ...provided, effect: fn => fn() })
+      if (deps.some((name) => provided[name] === undefined)) return () => {}
+      const dispose = callback({ ...provided, effect: (fn) => fn() })
       return () => {
         if (typeof dispose === 'function') dispose()
       }
@@ -44,7 +44,10 @@ export function mount(options = {}) {
       list.push(listener)
       listeners.set(event, list)
       return () => {
-        listeners.set(event, (listeners.get(event) ?? []).filter(item => item !== listener))
+        listeners.set(
+          event,
+          (listeners.get(event) ?? []).filter((item) => item !== listener),
+        )
       }
     },
     webServer: {
@@ -70,7 +73,12 @@ export function mount(options = {}) {
   }
 }
 
-export function fakeRequest({ method = 'POST', url = `${CHANNEL}/status`, headers = {}, body = undefined } = {}) {
+export function fakeRequest({
+  method = 'POST',
+  url = `${CHANNEL}/status`,
+  headers = {},
+  body = undefined,
+} = {}) {
   const req = new EventEmitter()
   req.method = method
   req.url = url
@@ -138,8 +146,7 @@ export async function rpcCall(handler, channel, endpoint, options = {}) {
   let payload = null
   try {
     payload = JSON.parse(res.body)
-  }
-  catch {
+  } catch {
     payload = null
   }
 
@@ -147,5 +154,8 @@ export async function rpcCall(handler, channel, endpoint, options = {}) {
     return payload.result
   }
 
-  return { ok: false, error: { code: 'internal', message: `HTTP ${res.statusCode}`, details: { code: 'transport' } } }
+  return {
+    ok: false,
+    error: { code: 'internal', message: `HTTP ${res.statusCode}`, details: { code: 'transport' } },
+  }
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { parseStatus, validateCwd } from '../lib/index.js'
+import { parseStatus, validateCwd } from '../lib/host/index.js'
 
 /** 拼一条 porcelain-v2 记录流（`-z` 用 NUL 分隔）。 */
 function stream(records) {
@@ -8,12 +8,14 @@ function stream(records) {
 }
 
 test('解析分支头信息', () => {
-  const status = parseStatus(stream([
-    '# branch.head main',
-    `# branch.oid ${'a'.repeat(40)}`,
-    '# branch.upstream origin/main',
-    '# branch.ab +2 -1',
-  ]))
+  const status = parseStatus(
+    stream([
+      '# branch.head main',
+      `# branch.oid ${'a'.repeat(40)}`,
+      '# branch.upstream origin/main',
+      '# branch.ab +2 -1',
+    ]),
+  )
 
   assert.equal(status.branch, 'main')
   assert.equal(status.detached, false)
@@ -26,10 +28,7 @@ test('解析分支头信息', () => {
 })
 
 test('detached HEAD 回退到短 oid', () => {
-  const status = parseStatus(stream([
-    '# branch.head (detached)',
-    `# branch.oid ${'b'.repeat(40)}`,
-  ]))
+  const status = parseStatus(stream(['# branch.head (detached)', `# branch.oid ${'b'.repeat(40)}`]))
 
   assert.equal(status.detached, true)
   assert.equal(status.branch, 'bbbbbbb')
@@ -42,14 +41,16 @@ test('干净仓库的计数全为 0', () => {
 })
 
 test('普通改动按 index 侧字母归类，路径里的空格被保留', () => {
-  const status = parseStatus(stream([
-    '# branch.head main',
-    '1 M. N... 100644 100644 100644 aaa bbb src/has space.ts',
-    '1 .M N... 100644 100644 100644 aaa bbb worktree-only.ts',
-    '1 A. N... 000000 100644 100644 000 bbb staged-new.ts',
-    '1 D. N... 100644 000000 000000 aaa 000 deleted.ts',
-    '1 T. N... 100644 100644 100644 aaa bbb type.ts',
-  ]))
+  const status = parseStatus(
+    stream([
+      '# branch.head main',
+      '1 M. N... 100644 100644 100644 aaa bbb src/has space.ts',
+      '1 .M N... 100644 100644 100644 aaa bbb worktree-only.ts',
+      '1 A. N... 000000 100644 100644 000 bbb staged-new.ts',
+      '1 D. N... 100644 000000 000000 aaa 000 deleted.ts',
+      '1 T. N... 100644 100644 100644 aaa bbb type.ts',
+    ]),
+  )
 
   assert.equal(status.counts.modified, 2)
   assert.equal(status.counts.added, 1)
@@ -63,12 +64,14 @@ test('普通改动按 index 侧字母归类，路径里的空格被保留', () =
 })
 
 test('重命名消费掉紧随其后的原路径记录', () => {
-  const status = parseStatus(stream([
-    '# branch.head main',
-    '2 R. N... 100644 100644 100644 aaa bbb R100 new/name.ts',
-    'src/old name.ts',
-    '? after.ts',
-  ]))
+  const status = parseStatus(
+    stream([
+      '# branch.head main',
+      '2 R. N... 100644 100644 100644 aaa bbb R100 new/name.ts',
+      'src/old name.ts',
+      '? after.ts',
+    ]),
+  )
 
   assert.equal(status.counts.renamed, 1)
   assert.equal(status.counts.untracked, 1)
@@ -80,21 +83,25 @@ test('重命名消费掉紧随其后的原路径记录', () => {
 })
 
 test('复制记为 copied', () => {
-  const status = parseStatus(stream([
-    '# branch.head main',
-    '2 C. N... 100644 100644 100644 aaa bbb C75 copy.ts',
-    'src/orig.ts',
-  ]))
+  const status = parseStatus(
+    stream([
+      '# branch.head main',
+      '2 C. N... 100644 100644 100644 aaa bbb C75 copy.ts',
+      'src/orig.ts',
+    ]),
+  )
 
   assert.equal(status.counts.copied, 1)
   assert.equal(status.changes[0].status, 'C')
 })
 
 test('未合并记录计入冲突', () => {
-  const status = parseStatus(stream([
-    '# branch.head main',
-    'u UU N... 100644 100644 100644 100644 aaa bbb ccc conflict file.ts',
-  ]))
+  const status = parseStatus(
+    stream([
+      '# branch.head main',
+      'u UU N... 100644 100644 100644 100644 aaa bbb ccc conflict file.ts',
+    ]),
+  )
 
   assert.equal(status.counts.conflicted, 1)
   assert.equal(status.changes[0].status, '!')

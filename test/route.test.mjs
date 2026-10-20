@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
-import { CHANNEL } from '../lib/index.js'
+import { CHANNEL } from '../lib/host/index.js'
 import { JSON_HEADERS, call, mount, requestBody as envelopeBody } from './helpers.mjs'
 
 test('注册一条前缀路由与会话归因监听，并都挂在自身的 ctx.effect 上', () => {
@@ -14,7 +14,13 @@ test('注册一条前缀路由与会话归因监听，并都挂在自身的 ctx.
   assert.equal(typeof routes[0].handler, 'function')
   // 两个 effect：会话归因的事件监听 + 路由本身（标签顺序就是注册顺序）。
   assert.deepEqual(labels, ['dsh-hud: session change tracking', `dsh-hud: POST ${CHANNEL}/*`])
-  assert.deepEqual([...listeners.keys()].sort(), ['fs/edit-intent', 'fs/observed', 'fs/write-intent', 'tools/post-execute', 'tools/pre-execute'])
+  assert.deepEqual([...listeners.keys()].sort(), [
+    'fs/edit-intent',
+    'fs/observed',
+    'fs/write-intent',
+    'tools/post-execute',
+    'tools/pre-execute',
+  ])
 })
 
 test('非 POST 一律 405', async () => {
@@ -89,7 +95,10 @@ test('未知端点返回错误信封与可诊断的 details.code', async () => {
 
 test('相对路径的 cwd 被拒绝，且错误走信封而非 HTTP 状态', async () => {
   const { handler } = mount()
-  const res = await call(handler, { headers: JSON_HEADERS, body: envelopeBody({ cwd: 'relative/path' }) })
+  const res = await call(handler, {
+    headers: JSON_HEADERS,
+    body: envelopeBody({ cwd: 'relative/path' }),
+  })
   assert.equal(res.statusCode, 200)
   const body = JSON.parse(res.body)
   assert.equal(body.type, 'server-response')
@@ -107,8 +116,7 @@ test('非仓库目录是成功结果（repo 为 null），不是错误', async (
     assert.equal(body.result.ok, true)
     assert.equal(body.result.value.repo, null)
     assert.equal(body.result.value.dirty, false)
-  }
-  finally {
+  } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
@@ -117,14 +125,22 @@ test('请求体超限返回 413', async () => {
   const { handler } = mount()
   const res = await call(handler, {
     headers: JSON_HEADERS,
-    body: JSON.stringify({ type: 'client-request', rpcId: 'x', method: 'status', payload: { pad: 'y'.repeat(300 * 1024) } }),
+    body: JSON.stringify({
+      type: 'client-request',
+      rpcId: 'x',
+      method: 'status',
+      payload: { pad: 'y'.repeat(300 * 1024) },
+    }),
   })
   assert.equal(res.statusCode, 413)
 })
 
 test('响应头带 json content-type 与准确 content-length', async () => {
   const { handler } = mount()
-  const res = await call(handler, { headers: JSON_HEADERS, body: envelopeBody({ cwd: 'relative' }) })
+  const res = await call(handler, {
+    headers: JSON_HEADERS,
+    body: envelopeBody({ cwd: 'relative' }),
+  })
   assert.equal(res.headers['content-type'], 'application/json; charset=utf-8')
   assert.equal(Number(res.headers['content-length']), Buffer.byteLength(res.body))
 })

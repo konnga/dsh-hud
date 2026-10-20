@@ -1,0 +1,15 @@
+{
+  // 宿主半的构建配置：**源码在 src/host/**，tsc 逐文件产出到 lib/host/**。
+  // 浏览器半走 rolldown（tsconfig.json + rolldown.config.mjs），两边互不干扰。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "lib",
+    "rootDir": "src",
+    "types": ["node"],
+    "lib": ["ES2022"],
+    "strict": true,
+    "noImplicitAny": true
+  },
+  "include": ["src/host/**/*.ts"]
+}

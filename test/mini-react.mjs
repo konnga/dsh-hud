@@ -55,11 +55,12 @@ export function createMiniReact() {
     instance.pending = []
     for (const entry of queue) {
       const previous = instance.effects.get(entry.slot)
-      const unchanged = previous !== undefined
-        && Array.isArray(entry.deps)
-        && Array.isArray(previous.deps)
-        && entry.deps.length === previous.deps.length
-        && entry.deps.every((value, index) => Object.is(value, previous.deps[index]))
+      const unchanged =
+        previous !== undefined &&
+        Array.isArray(entry.deps) &&
+        Array.isArray(previous.deps) &&
+        entry.deps.length === previous.deps.length &&
+        entry.deps.every((value, index) => Object.is(value, previous.deps[index]))
       if (unchanged) continue
       if (previous && typeof previous.cleanup === 'function') previous.cleanup()
       instance.effects.set(entry.slot, { deps: entry.deps, cleanup: entry.fn() })
@@ -80,8 +81,8 @@ export function createMiniReact() {
     const previous = hookSequences.get(key)
     if (previous !== undefined && previous !== kinds) {
       throw new Error(
-        `组件 ${component.name || '(匿名)'} 的钩子数量/顺序变了：上次 [${previous}]，这次 [${kinds}]。`
-        + ' 这通常是条件钩子或"提前 return 跳过了某些钩子" —— 真 React 会直接抛错并让整棵子树消失。',
+        `组件 ${component.name || '(匿名)'} 的钩子数量/顺序变了：上次 [${previous}]，这次 [${kinds}]。` +
+          ' 这通常是条件钩子或"提前 return 跳过了某些钩子" —— 真 React 会直接抛错并让整棵子树消失。',
       )
     }
     hookSequences.set(key, kinds)
@@ -94,7 +95,15 @@ export function createMiniReact() {
 
     /** 挂载组件，返回第一棵渲染树；之后的 state 变化会同步刷新。 */
     mount(component, props) {
-      instance = { state: {}, effects: new Map(), pending: [], index: 0, hookKinds: [], tree: null, rerender: () => {} }
+      instance = {
+        state: {},
+        effects: new Map(),
+        pending: [],
+        index: 0,
+        hookKinds: [],
+        tree: null,
+        rerender: () => {},
+      }
       instance.rerender = () => renderOnce(component, props)
       return renderOnce(component, props)
     },

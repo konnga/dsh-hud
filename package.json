@@ -3,9 +3,10 @@
   "version": "0.9.1",
   "description": "DeepSeek Harness 的只读工作区 Git 面板：分支、ahead/behind、改动清单与差异，外加「这个会话改过哪些文件、审到哪了、跑了什么工具」。A read-only workspace Git panel for DeepSeek Harness — branch, changed files, diffs, plus per-session change attribution, review progress, and tool activity.",
   "type": "module",
-  "main": "lib/index.js",
+  "packageManager": "pnpm@11.28.5",
+  "main": "lib/host/index.js",
   "exports": {
-    ".": "./lib/index.js",
+    ".": "./lib/host/index.js",
     "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
@@ -18,9 +19,13 @@
     "docs/images"
   ],
   "scripts": {
-    "test": "node --test test/*.test.mjs",
-    "prepublishOnly": "npm test && node scripts/check-release.mjs",
-    "tag": "node scripts/check-release.mjs --create"
+    "test": "tsc -p tsconfig.json && tsc -p tsconfig.host.json --noEmit && node --test test/*.test.mjs",
+    "build": "tsc -p tsconfig.host.json && rolldown -c rolldown.config.mjs",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.host.json --noEmit",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"rolldown.config.mjs\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"rolldown.config.mjs\"",
+    "tag": "node scripts/check-release.mjs --create",
+    "prepublishOnly": "pnpm run build && pnpm test && node scripts/check-release.mjs"
   },
   "keywords": [
     "dsh",
@@ -78,13 +83,13 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "react": "^18.2.0",
     "@deepseek-ai/dsh-client-connection": "*",
     "@deepseek-ai/dsh-client-locale": "*",
     "@deepseek-ai/dsh-client-ui-conversation": "*",
     "@deepseek-ai/dsh-client-ui-layout": "*",
     "@deepseek-ai/dsh-client-ui-renderer": "*",
-    "@deepseek-ai/dsh-client-ui-session": "*"
+    "@deepseek-ai/dsh-client-ui-session": "*",
+    "react": "^18.2.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-client-connection": {
@@ -105,5 +110,12 @@
     "@deepseek-ai/dsh-client-ui-session": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^18.3.31",
+    "prettier": "^3.9.10",
+    "rolldown": "^1.2.14",
+    "typescript": "^7.0.2"
   }
 }

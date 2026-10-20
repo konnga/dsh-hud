@@ -1,0 +1,4 @@
+# DSH 的客户端服务（@deepseek-ai/*）由宿主运行时提供，本包只在 peerDependencies 里声明形状，
+# 不跟着安装（其中部分包未公开发布，自动装 peer 会 404）。react 在 rolldown 里是 external，
+# 类型经 @types/react 提供，所以也不需要装。
+autoInstallPeers: false

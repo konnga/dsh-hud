@@ -163,11 +163,14 @@ main* ↑0 ↓0 · 已修改 7 未跟踪 2
 
 ## 开发
 
-- `lib/index.js`：宿主半（跑 git、提供 `/dsh-hud-rpc`）。
-- `lib/client.js`：浏览器半（**无构建步骤**，手写 JS，只依赖种子模块 `react`）。
-- `npm test`：全部用例（`node --test test/*.test.mjs`）。零依赖、不用装东西。
+- `src/host/**`：宿主半的源码（TypeScript；跑 git、提供 `/dsh-hud-rpc`），`tsc` 逐文件产出到 `lib/host/**`。
+- `src/client/**`：浏览器半的源码（TypeScript，只依赖种子模块 `react`）；`lib/client.js` 是**打包产物**（rolldown），因为 DSH 只加载「一个经典脚本」。
+- 约定：`src/` 全是源码，`lib/` 全是产物 —— `pnpm run build` 一次重建两半（`tsc -p tsconfig.host.json` + `rolldown`），产物与源码一起提交（DSH 与本机 profile 直接读 `lib/`）。
+- `pnpm test`：类型检查（浏览器半与宿主半都是**全量 `strict`**）+ 全部用例。
+- `pnpm run format`：Prettier 统一源码格式（`.prettierrc.json`；`lib/` 是产物、不格式化），`pnpm run format:check` 只检查。
+- 包管理器是 pnpm：`pnpm-lock.yaml` 入库；`pnpm-workspace.yaml` 关掉 `autoInstallPeers` —— DSH 的客户端服务由宿主提供，不随包安装。
 - `docs/dock-slot-host.md`：把输入框上方那一行做成「可注册行内宿主」的提案，给上游看的。
-- **发版**：`npm run tag && npm publish`。`prepublishOnly` 先跑测试，再校验「版本号 ↔ git tag」（工作区要干净、`v<版本>` 要存在且指向 HEAD），对不上就发不出去。
+- **发版**：`pnpm run tag && pnpm publish`。`prepublishOnly` 先跑测试，再校验「版本号 ↔ git tag」（工作区要干净、`v<版本>` 要存在且指向 HEAD），对不上就发不出去。
 
 ## 许可
 

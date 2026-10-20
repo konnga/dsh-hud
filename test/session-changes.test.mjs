@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile as writeFileAt } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test as nodeTest } from 'node:test'
-import { CHANNEL } from '../lib/index.js'
+import { CHANNEL } from '../lib/host/index.js'
 import { mount as mountHost, rpcCall } from './helpers.mjs'
 
 /**
@@ -51,9 +51,10 @@ function sessionOf(name) {
 
 /** 一次工具调用的执行上下文（形状与真实 `exec` 对齐，只放归因用得上的字段）。 */
 function exec({ sessionId, cwd = CWD, callId = 'call-1' } = {}) {
-  const agent = sessionId === null
-    ? undefined
-    : { session: { header: { id: sessionId, ...(cwd === null ? {} : { cwd }) } } }
+  const agent =
+    sessionId === null
+      ? undefined
+      : { session: { header: { id: sessionId, ...(cwd === null ? {} : { cwd }) } } }
   return { ...(callId === null ? {} : { callId }), ...(agent === undefined ? {} : { agent }) }
 }
 
@@ -90,7 +91,17 @@ test('会话归因：端点返回浏览器半要读的全部字段', async () =>
   writeFile(bundle, session, 'src/a.ts')
   const value = await read(bundle, session)
 
-  for (const key of ['repo', 'sessionId', 'tracking', 'since', 'firstChangeAt', 'files', 'dropped', 'unconfirmed', 'cwdMismatch']) {
+  for (const key of [
+    'repo',
+    'sessionId',
+    'tracking',
+    'since',
+    'firstChangeAt',
+    'files',
+    'dropped',
+    'unconfirmed',
+    'cwdMismatch',
+  ]) {
     assert.ok(key in value, `缺少浏览器半要读的字段 ${key}`)
   }
   assert.equal(value.repo, CWD)
@@ -112,10 +123,13 @@ test('会话归因：意图 + 观察配对才算一次落地，写入与编辑�
   editFile(bundle, session, 'src/b.ts', { callId: 'call-3' })
 
   const value = await read(bundle, session)
-  assert.deepEqual(value.files.map(file => [file.file, file.writes, file.edits]), [
-    ['src/a.ts', 2, 0],
-    ['src/b.ts', 0, 1],
-  ])
+  assert.deepEqual(
+    value.files.map((file) => [file.file, file.writes, file.edits]),
+    [
+      ['src/a.ts', 2, 0],
+      ['src/b.ts', 0, 1],
+    ],
+  )
   assert.ok(value.files[0].firstAt <= value.files[0].lastAt, '首次不晚于末次')
 })
 
@@ -123,7 +137,12 @@ test('会话归因：只有观察没有意图（读文件）不算改动', async
   const session = sessionOf('readonly')
   const bundle = mount()
   const absolute = path.join(CWD, 'README.md')
-  bundle.emit('fs/observed', fsTarget(absolute), { kind: 'present', version: 'v1' }, exec({ sessionId: session }))
+  bundle.emit(
+    'fs/observed',
+    fsTarget(absolute),
+    { kind: 'present', version: 'v1' },
+    exec({ sessionId: session }),
+  )
 
   const value = await read(bundle, session)
   assert.deepEqual(value.files, [], '读一次不该被算成"这个会话改过它"')
@@ -137,7 +156,12 @@ test('会话归因：观察配不上那次调用的意图就不算（别把别�
   const absolute = path.join(CWD, 'src/a.ts')
   bundle.emit('fs/write-intent', fsTarget(absolute), exec({ sessionId: session, callId: 'call-1' }))
   // 另一次调用的观察（callId 不同）：配对不上。
-  bundle.emit('fs/observed', fsTarget(absolute), { kind: 'present' }, exec({ sessionId: session, callId: 'call-2' }))
+  bundle.emit(
+    'fs/observed',
+    fsTarget(absolute),
+    { kind: 'present' },
+    exec({ sessionId: session, callId: 'call-2' }),
+  )
 
   assert.deepEqual((await read(bundle, session)).files, [])
 })
@@ -146,7 +170,10 @@ test('会话归因：没有 callId 时退回"会话 + 路径"配对，仍然记�
   const session = sessionOf('nocallid')
   const bundle = mount()
   writeFile(bundle, session, 'src/a.ts', { callId: null })
-  assert.deepEqual((await read(bundle, session)).files.map(file => file.file), ['src/a.ts'])
+  assert.deepEqual(
+    (await read(bundle, session)).files.map((file) => file.file),
+    ['src/a.ts'],
+  )
 })
 
 test('会话归因：cwd 之外的路径不记（git 只关心工作区里的）', async () => {
@@ -176,8 +203,14 @@ test('会话归因：会话之间互不串（问谁就只答谁）', async () =>
   writeFile(bundle, first, 'src/a.ts')
   writeFile(bundle, second, 'src/b.ts')
 
-  assert.deepEqual((await read(bundle, first)).files.map(file => file.file), ['src/a.ts'])
-  assert.deepEqual((await read(bundle, second)).files.map(file => file.file), ['src/b.ts'])
+  assert.deepEqual(
+    (await read(bundle, first)).files.map((file) => file.file),
+    ['src/a.ts'],
+  )
+  assert.deepEqual(
+    (await read(bundle, second)).files.map((file) => file.file),
+    ['src/b.ts'],
+  )
 })
 
 test('会话归因：不认识的会话返回空清单（不是错误）', async () => {
@@ -234,7 +267,11 @@ test('会话归因：会话记录的 cwd 与请求的 cwd 不一致时返回空�
   writeFile(bundle, session, 'src/a.ts')
 
   const same = await read(bundle, session)
-  assert.deepEqual(same.files.map(file => file.file), ['src/a.ts'], '同工作区照常')
+  assert.deepEqual(
+    same.files.map((file) => file.file),
+    ['src/a.ts'],
+    '同工作区照常',
+  )
 
   const other = await read(bundle, session, { cwd: '/Users/me/other-project' })
   assert.deepEqual(other.files, [], '换了个工作区就不该拿它的相对路径去对账')
@@ -246,8 +283,16 @@ test('会话归因：unconfirmed 只数这个会话的待配对意图', async ()
   const theirs = sessionOf('pending-theirs')
   const bundle = mount()
   // 两边都只发意图、不发观察（写入还在路上）。
-  bundle.emit('fs/write-intent', fsTarget(path.join(CWD, 'src/a.ts')), exec({ sessionId: mine, callId: 'call-a' }))
-  bundle.emit('fs/write-intent', fsTarget(path.join(CWD, 'src/b.ts')), exec({ sessionId: theirs, callId: 'call-b' }))
+  bundle.emit(
+    'fs/write-intent',
+    fsTarget(path.join(CWD, 'src/a.ts')),
+    exec({ sessionId: mine, callId: 'call-a' }),
+  )
+  bundle.emit(
+    'fs/write-intent',
+    fsTarget(path.join(CWD, 'src/b.ts')),
+    exec({ sessionId: theirs, callId: 'call-b' }),
+  )
 
   const value = await read(bundle, mine)
   assert.equal(value.unconfirmed, 1, '只数自己的那条')
@@ -293,7 +338,11 @@ test('命令旁听：只读命令不产生"可能相关"，但会留在命令历
   const value = await read(bundle, session)
   assert.deepEqual(value.possible, [], '看了不等于改了')
   assert.equal(value.commands.length, 2, '跑过什么要记下来')
-  assert.equal(value.commands.every(item => item.readOnly === true), true, '要标出"看着只读"')
+  assert.equal(
+    value.commands.every((item) => item.readOnly === true),
+    true,
+    '要标出"看着只读"',
+  )
 })
 
 test('命令旁听：重定向 / tee / sed -i / touch 的目标算"可能相关"，并带上原因', async () => {
@@ -306,11 +355,18 @@ test('命令旁听：重定向 / tee / sed -i / touch 的目标算"可能相关"
   bashCall(bundle, session, 'touch src/e.ts src/f.ts', { callId: 'c5' })
 
   const value = await read(bundle, session)
-  assert.deepEqual(value.possible.map(item => item.file), [
-    'build/out.log', 'src/a.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts', 'src/f.ts',
-  ])
-  assert.ok(value.possible.every(item => typeof item.reason === 'string' && item.reason.length > 0), '每个都要说清是哪条命令')
-  assert.equal(value.possible.every(item => item.hits >= 1), true)
+  assert.deepEqual(
+    value.possible.map((item) => item.file),
+    ['build/out.log', 'src/a.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts', 'src/f.ts'],
+  )
+  assert.ok(
+    value.possible.every((item) => typeof item.reason === 'string' && item.reason.length > 0),
+    '每个都要说清是哪条命令',
+  )
+  assert.equal(
+    value.possible.every((item) => item.hits >= 1),
+    true,
+  )
 })
 
 test('命令旁听：mv 的源与目标都记（源会消失），cp 只记目标', async () => {
@@ -319,8 +375,11 @@ test('命令旁听：mv 的源与目标都记（源会消失），cp 只记目�
   bashCall(bundle, session, 'mv src/old.ts src/new.ts', { callId: 'c1' })
   bashCall(bundle, session, 'cp src/new.ts src/copy.ts', { callId: 'c2' })
 
-  const files = (await read(bundle, session)).possible.map(item => item.file)
-  assert.ok(files.includes('src/old.ts'), `mv 的源也要记（会被删掉），实际 ${JSON.stringify(files)}`)
+  const files = (await read(bundle, session)).possible.map((item) => item.file)
+  assert.ok(
+    files.includes('src/old.ts'),
+    `mv 的源也要记（会被删掉），实际 ${JSON.stringify(files)}`,
+  )
   assert.ok(files.includes('src/new.ts'))
   assert.ok(files.includes('src/copy.ts'), 'cp 的目标要记')
 })
@@ -328,7 +387,9 @@ test('命令旁听：mv 的源与目标都记（源会消失），cp 只记目�
 test('命令旁听：失败的命令只进历史，不算"可能相关"', async () => {
   const session = sessionOf('cmd-failed')
   const bundle = mount()
-  bashCall(bundle, session, 'printf x > src/a.ts', { result: { ok: false, error: { code: 'exit-1' } } })
+  bashCall(bundle, session, 'printf x > src/a.ts', {
+    result: { ok: false, error: { code: 'exit-1' } },
+  })
 
   const value = await read(bundle, session)
   assert.deepEqual(value.possible, [], '失败的命令没改文件')
@@ -345,13 +406,17 @@ test('命令旁听：非 shell 工具、以及 cwd 之外的目标都不记', as
   const value = await read(bundle, session)
   assert.deepEqual(value.possible, [], '别的工具与工作区之外都不参与路径归因')
   assert.equal(value.commands.length, 2, '两条 bash 仍要留在历史里（它们确实跑过）')
-  assert.deepEqual(value.commands.map(item => item.tool), ['bash', 'bash'])
+  assert.deepEqual(
+    value.commands.map((item) => item.tool),
+    ['bash', 'bash'],
+  )
 })
 
 test('命令旁听：命令历史留最近 20 条', async () => {
   const session = sessionOf('cmd-history')
   const bundle = mount()
-  for (let index = 0; index < 25; index += 1) bashCall(bundle, session, `echo ${index}`, { callId: `c${index}` })
+  for (let index = 0; index < 25; index += 1)
+    bashCall(bundle, session, `echo ${index}`, { callId: `c${index}` })
 
   const value = await read(bundle, session)
   assert.equal(value.commands.length, 20)
@@ -361,7 +426,8 @@ test('命令旁听：命令历史留最近 20 条', async () => {
 test('命令旁听：抽路径有上限，超出只计数', async () => {
   const session = sessionOf('cmd-cap')
   const bundle = mount()
-  for (let index = 0; index < 320; index += 1) bashCall(bundle, session, `touch src/p${index}.ts`, { callId: `c${index}` })
+  for (let index = 0; index < 320; index += 1)
+    bashCall(bundle, session, `touch src/p${index}.ts`, { callId: `c${index}` })
 
   const value = await read(bundle, session)
   assert.equal(value.possible.length, 300)
@@ -375,8 +441,16 @@ test('命令旁听：与"确定改过"分开记（同名文件两档并存，互
   bashCall(bundle, session, 'sed -i s/x/y/ src/a.ts')
 
   const value = await read(bundle, session)
-  assert.deepEqual(value.files.map(item => item.file), ['src/a.ts'], '确定改过在 files 里')
-  assert.deepEqual(value.possible.map(item => item.file), ['src/a.ts'], '命令也给了一条"可能"')
+  assert.deepEqual(
+    value.files.map((item) => item.file),
+    ['src/a.ts'],
+    '确定改过在 files 里',
+  )
+  assert.deepEqual(
+    value.possible.map((item) => item.file),
+    ['src/a.ts'],
+    '命令也给了一条"可能"',
+  )
   assert.equal(value.files[0].writes, 1, '互不污染')
 })
 
@@ -398,7 +472,9 @@ function fakeSessionProjections(options = {}) {
   const state = { turn: options.turn ?? 0 }
   return {
     state,
-    setTurn(next) { state.turn = next },
+    setTurn(next) {
+      state.turn = next
+    },
     stateOf: (session, key) => {
       if (options.throwing === true) throw new Error('projection unavailable')
       if (key !== 'turnBoundary') return undefined
@@ -424,10 +500,10 @@ test('回合归因（宿主）：记下"第几轮动的它"，多轮动过同一
   writeFile(bundle, session, 'src/a.ts', { callId: 'c3' })
 
   const value = await read(bundle, session)
-  const a = value.files.find(item => item.file === 'src/a.ts')
+  const a = value.files.find((item) => item.file === 'src/a.ts')
   assert.equal(a.lastTurn, 1, '最近一次是第 1 轮')
   assert.deepEqual(a.turns, [0, 1], '两轮都动过就都留着')
-  assert.equal(value.files.find(item => item.file === 'src/b.ts').lastTurn, 0)
+  assert.equal(value.files.find((item) => item.file === 'src/b.ts').lastTurn, 0)
 })
 
 test('回合归因（宿主）：命令与"可能相关"也带回合号', async () => {
@@ -462,7 +538,7 @@ test('回合归因（宿主）：没有这个服务（或它抛错）时记 null
 /** 一套假的宿主 `sessions` 服务：`list()` 返回若干活着的会话。 */
 function fakeHostSessions(rows) {
   return {
-    list: () => rows.map(row => ({ header: { id: row.sessionId, cwd: row.cwd } })),
+    list: () => rows.map((row) => ({ header: { id: row.sessionId, cwd: row.cwd } })),
   }
 }
 
@@ -477,11 +553,15 @@ test('会话一览：没有 sessions 服务时报"不可用"，而不是空列�
 test('会话一览：每个会话带上它自己的工作区摘要，并按目录去重只读一次', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'dsh-hud-overview-'))
   try {
-    const bundle = mount({ services: { sessions: fakeHostSessions([
-      { sessionId: 'session-a', cwd: dir },
-      { sessionId: 'session-b', cwd: dir },
-      { sessionId: 'session-c', cwd: null },
-    ]) } })
+    const bundle = mount({
+      services: {
+        sessions: fakeHostSessions([
+          { sessionId: 'session-a', cwd: dir },
+          { sessionId: 'session-b', cwd: dir },
+          { sessionId: 'session-c', cwd: null },
+        ]),
+      },
+    })
     const result = await rpcCall(bundle.handler, CHANNEL, 'session-statuses', { args: {} })
     assert.equal(result.ok, true)
     const value = result.value
@@ -490,7 +570,7 @@ test('会话一览：每个会话带上它自己的工作区摘要，并按目�
     assert.equal(value.worktrees, 1, '两个会话同一个目录 → 只读一个工作区')
     assert.equal(value.truncated, false)
 
-    const byId = Object.fromEntries(value.sessions.map(item => [item.sessionId, item]))
+    const byId = Object.fromEntries(value.sessions.map((item) => [item.sessionId, item]))
     // 目录不是仓库：两行都报 repo:false，但仍要有 mine/possible（归因与 git 无关）。
     assert.equal(byId['session-a'].repo, false)
     assert.equal(byId['session-b'].repo, false)
@@ -504,7 +584,9 @@ test('会话一览：每个会话带上它自己的工作区摘要，并按目�
 test('会话一览：把"这个会话自己改过什么"一并带上（非仓库也有）', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'dsh-hud-overview2-'))
   try {
-    const bundle = mount({ services: { sessions: fakeHostSessions([{ sessionId: 'session-x', cwd: dir }]) } })
+    const bundle = mount({
+      services: { sessions: fakeHostSessions([{ sessionId: 'session-x', cwd: dir }]) },
+    })
     writeFile(bundle, 'session-x', 'src/a.ts')
     bashCall(bundle, 'session-x', 'sed -i s/a/b/ src/b.ts')
 
@@ -531,11 +613,14 @@ function toolStart(bundle, options = {}) {
     name: options.name ?? 'bash',
     callId: options.callId ?? 'call-1',
     arguments: options.arguments ?? { command: 'pnpm test' },
-    agent: { session: { header: { id: options.sessionId ?? 'session-x', cwd: options.cwd ?? CWD } } },
+    agent: {
+      session: { header: { id: options.sessionId ?? 'session-x', cwd: options.cwd ?? CWD } },
+    },
   }
   const allow = { kind: 'allow' }
   let returned
-  for (const listener of bundle.listeners.get('tools/pre-execute') ?? []) returned = listener(context, () => allow)
+  for (const listener of bundle.listeners.get('tools/pre-execute') ?? [])
+    returned = listener(context, () => allow)
   return { context, returned, allow }
 }
 
@@ -543,7 +628,8 @@ function toolStart(bundle, options = {}) {
 function toolFinish(bundle, context, options = {}) {
   const accept = { kind: 'accept' }
   let returned
-  for (const listener of bundle.listeners.get('tools/post-execute') ?? []) returned = listener(context, options.result ?? { ok: true }, () => accept)
+  for (const listener of bundle.listeners.get('tools/post-execute') ?? [])
+    returned = listener(context, options.result ?? { ok: true }, () => accept)
   return { returned, accept }
 }
 
@@ -570,12 +656,21 @@ test('工具活动：pre-execute 必须透传判定，post-execute 也要（不�
 test('工具活动：开跑时记下名字、参数摘要与开始时刻，结束后进"最近"并带上耗时', async () => {
   const session = sessionOf('tools-basic')
   const bundle = mount()
-  const { context } = toolStart(bundle, { sessionId: session, name: 'bash', arguments: { command: 'pnpm test --filter foo' }, callId: 'c1' })
+  const { context } = toolStart(bundle, {
+    sessionId: session,
+    name: 'bash',
+    arguments: { command: 'pnpm test --filter foo' },
+    callId: 'c1',
+  })
 
   const running = await readTools(bundle, session)
   assert.equal(running.active.name, 'bash', '跑的时候要能报出工具名')
   assert.equal(running.active.summary, 'pnpm test --filter foo', '参数摘要给命令原文（截断）')
-  assert.equal(typeof running.active.startedAt, 'number', '实时秒数由客户端本地计时，所以要给开始时刻')
+  assert.equal(
+    typeof running.active.startedAt,
+    'number',
+    '实时秒数由客户端本地计时，所以要给开始时刻',
+  )
   assert.equal(running.total, 1)
 
   toolFinish(bundle, context, { result: { ok: false, error: { code: 'exit-1' } } })
@@ -590,7 +685,12 @@ test('工具活动：开跑时记下名字、参数摘要与开始时刻，结�
 test('工具活动：按工具名累计次数，并按次数排序', async () => {
   const session = sessionOf('tools-counts')
   const bundle = mount()
-  for (const [callId, name] of [['c1', 'bash'], ['c2', 'bash'], ['c3', 'bash'], ['c4', 'read_file']]) {
+  for (const [callId, name] of [
+    ['c1', 'bash'],
+    ['c2', 'bash'],
+    ['c3', 'bash'],
+    ['c4', 'read_file'],
+  ]) {
     toolCall(bundle, { sessionId: session, name, callId, arguments: { command: 'x' } })
   }
   const value = await readTools(bundle, session)
@@ -601,10 +701,15 @@ test('工具活动：按工具名累计次数，并按次数排序', async () =>
   assert.equal(value.total, 4)
 
   // 每个工具**各自**最近一次的结果：胶囊上那个 ✓/✗ 用它（没结束过就是 null，不编一个）。
-  toolCall(bundle, { sessionId: session, name: 'read_file', callId: 'c5', result: { ok: false, error: { code: 'boom' } } })
+  toolCall(bundle, {
+    sessionId: session,
+    name: 'read_file',
+    callId: 'c5',
+    result: { ok: false, error: { code: 'boom' } },
+  })
   toolStart(bundle, { sessionId: session, name: 'glob', callId: 'c6' })
   const after = await readTools(bundle, session)
-  const byName = Object.fromEntries(after.counts.map(item => [item.name, item.ok]))
+  const byName = Object.fromEntries(after.counts.map((item) => [item.name, item.ok]))
   assert.equal(byName.bash, true)
   assert.equal(byName.read_file, false, '失败的工具有自己的 ✗')
   assert.equal(byName.glob, null, '还在跑（或从没结束过）就不给结论')
@@ -613,11 +718,21 @@ test('工具活动：按工具名累计次数，并按次数排序', async () =>
 test('工具活动：参数摘要只认路径/命令类字段，认不出来就留空（不把文件内容贴到界面上）', async () => {
   const session = sessionOf('tools-privacy')
   const bundle = mount()
-  toolCall(bundle, { sessionId: session, name: 'write', callId: 'c1', arguments: { filePath: 'src/a.ts', content: 'SECRET BODY 不应该出现在摘要里' } })
-  toolCall(bundle, { sessionId: session, name: 'weird', callId: 'c2', arguments: { content: 'SECRET BODY 不应该出现在摘要里' } })
+  toolCall(bundle, {
+    sessionId: session,
+    name: 'write',
+    callId: 'c1',
+    arguments: { filePath: 'src/a.ts', content: 'SECRET BODY 不应该出现在摘要里' },
+  })
+  toolCall(bundle, {
+    sessionId: session,
+    name: 'weird',
+    callId: 'c2',
+    arguments: { content: 'SECRET BODY 不应该出现在摘要里' },
+  })
 
   const value = await readTools(bundle, session)
-  const byName = Object.fromEntries(value.recent.map(item => [item.name, item]))
+  const byName = Object.fromEntries(value.recent.map((item) => [item.name, item]))
   assert.equal(byName['write'].summary, 'src/a.ts', '有路径就用路径')
   assert.equal(byName['weird'].summary, null, '只有 content 时留空，绝不猜')
   assert.ok(!JSON.stringify(value).includes('SECRET BODY'), '整个载荷里都不该出现文件内容')
@@ -628,7 +743,12 @@ test('工具活动：并发调用时 active 记最后一次，先结束的那次
   const bundle = mount()
   const pre = bundle.listeners.get('tools/pre-execute')
   const post = bundle.listeners.get('tools/post-execute')
-  const make = callId => ({ name: 'bash', callId, arguments: { command: 'x' }, agent: { session: { header: { id: session, cwd: CWD } } } })
+  const make = (callId) => ({
+    name: 'bash',
+    callId,
+    arguments: { command: 'x' },
+    agent: { session: { header: { id: session, cwd: CWD } } },
+  })
   for (const listener of pre) listener(make('c1'), () => ({ kind: 'allow' }))
   for (const listener of pre) listener(make('c2'), () => ({ kind: 'allow' }))
   for (const listener of post) listener(make('c1'), { ok: true }, () => ({ kind: 'accept' }))
@@ -641,7 +761,13 @@ test('工具活动：并发调用时 active 记最后一次，先结束的那次
 test('工具活动：只留最近 12 条，端点只回最近 5 条', async () => {
   const session = sessionOf('tools-ring')
   const bundle = mount()
-  for (let i = 0; i < 20; i += 1) toolCall(bundle, { sessionId: session, name: 'bash', callId: `c${i}`, arguments: { command: `run ${i}` } })
+  for (let i = 0; i < 20; i += 1)
+    toolCall(bundle, {
+      sessionId: session,
+      name: 'bash',
+      callId: `c${i}`,
+      arguments: { command: `run ${i}` },
+    })
 
   const value = await readTools(bundle, session)
   assert.equal(value.recent.length, 5, '端点只回最近 5 条（悬停里够用）')
@@ -657,7 +783,16 @@ test('工具活动：会话之间互不串，没有记录的会话回空壳而�
 
   assert.equal((await readTools(bundle, first)).total, 1)
   const other = await readTools(bundle, second)
-  assert.deepEqual(other, { sessionId: second, tracking: true, active: null, recent: [], counts: [], skills: [], skillsDropped: 0, total: 0 })
+  assert.deepEqual(other, {
+    sessionId: second,
+    tracking: true,
+    active: null,
+    recent: [],
+    counts: [],
+    skills: [],
+    skillsDropped: 0,
+    total: 0,
+  })
   const none = await readTools(bundle, null)
   assert.equal(none.sessionId, null)
 })
@@ -683,7 +818,9 @@ test('会话一览：「可能相关」同时报"记录到几个"和"其中几�
     git('add', '.')
     git('commit', '-m', 'init')
 
-    const bundle = mount({ services: { sessions: fakeHostSessions([{ sessionId: 'session-y', cwd: dir }]) } })
+    const bundle = mount({
+      services: { sessions: fakeHostSessions([{ sessionId: 'session-y', cwd: dir }]) },
+    })
     // 一条命令改的是**真的被改了**的文件（盘上也改，才会出现在 status 里）；
     // 另一条只提到一个并不存在、也没被改的路径（`bashCall` 只告诉插件"跑过这条命令"，不执行它）。
     await writeFileAt(path.join(dir, 'tracked.ts'), 'b\n')
@@ -703,26 +840,54 @@ test('会话一览：「可能相关」同时报"记录到几个"和"其中几�
 test('技能：`skill` 工具调用会被单独记下来（能从"skill ×2"看出是哪两个技能）', async () => {
   const session = sessionOf('tools-skills')
   const bundle = mount()
-  toolCall(bundle, { sessionId: session, name: 'skill', callId: 's1', arguments: { name: 'office-xlsx' } })
-  toolCall(bundle, { sessionId: session, name: 'skill', callId: 's2', arguments: { name: 'office-xlsx' } })
-  toolCall(bundle, { sessionId: session, name: 'skill', callId: 's3', arguments: { name: 'pdf' }, result: { ok: false, error: { code: 'boom' } } })
+  toolCall(bundle, {
+    sessionId: session,
+    name: 'skill',
+    callId: 's1',
+    arguments: { name: 'office-xlsx' },
+  })
+  toolCall(bundle, {
+    sessionId: session,
+    name: 'skill',
+    callId: 's2',
+    arguments: { name: 'office-xlsx' },
+  })
+  toolCall(bundle, {
+    sessionId: session,
+    name: 'skill',
+    callId: 's3',
+    arguments: { name: 'pdf' },
+    result: { ok: false, error: { code: 'boom' } },
+  })
   toolCall(bundle, { sessionId: session, name: 'bash', callId: 'b1', arguments: { command: 'ls' } })
 
   const value = await readTools(bundle, session)
-  assert.deepEqual(value.skills, [
-    { name: 'office-xlsx', count: 2, ok: true },
-    { name: 'pdf', count: 1, ok: false },
-  ], '按次数排序，并带上各技能自己最近一次的结果')
+  assert.deepEqual(
+    value.skills,
+    [
+      { name: 'office-xlsx', count: 2, ok: true },
+      { name: 'pdf', count: 1, ok: false },
+    ],
+    '按次数排序，并带上各技能自己最近一次的结果',
+  )
   // 摘要也要给技能名（否则悬停里只能看到 `skill`，看不出是哪个）。
-  const byName = Object.fromEntries(value.recent.map(item => [item.summary, item]))
-  assert.ok(byName['office-xlsx'], `skill 调用的摘要应是技能名，实际 ${JSON.stringify(value.recent)}`)
+  const byName = Object.fromEntries(value.recent.map((item) => [item.summary, item]))
+  assert.ok(
+    byName['office-xlsx'],
+    `skill 调用的摘要应是技能名，实际 ${JSON.stringify(value.recent)}`,
+  )
 })
 
 test('技能：只有 `skill` 工具的参数才被当成技能名（别的工具的 name 不能被误认）', async () => {
   const session = sessionOf('tools-skills-guard')
   const bundle = mount()
   // 另一个工具也带 name 参数：它不该出现在技能表里。
-  toolCall(bundle, { sessionId: session, name: 'some_tool', callId: 'x1', arguments: { name: 'not-a-skill' } })
+  toolCall(bundle, {
+    sessionId: session,
+    name: 'some_tool',
+    callId: 'x1',
+    arguments: { name: 'not-a-skill' },
+  })
   const value = await readTools(bundle, session)
   assert.deepEqual(value.skills, [], '只有 skill 工具的 name 才算技能名')
 })

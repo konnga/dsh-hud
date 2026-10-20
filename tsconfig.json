@@ -1,0 +1,19 @@
+{
+  // 浏览器半的源码检查。宿主半有独立的 tsconfig.host.json（tsc 逐文件产出到 lib/host）。
+  // strict 已全量打开：浏览器半 33 个模块全部零 strict 错误（逐模块收紧的过程已完成）。
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "types": ["react"]
+  },
+  "include": ["src/client/**/*.ts"]
+}

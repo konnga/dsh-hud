@@ -4,14 +4,13 @@ import { mkdtemp, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
-import { parseDiff, readDiff, validateDiffPath } from '../lib/index.js'
+import { parseDiff, readDiff, validateDiffPath } from '../lib/host/index.js'
 
 const HAS_GIT = (() => {
   try {
     execFileSync('git', ['--version'], { stdio: 'ignore' })
     return true
-  }
-  catch {
+  } catch {
     return false
   }
 })()
@@ -42,21 +41,24 @@ test('解析：按 hunk 头重置行号，并区分增删上下文', () => {
   assert.equal(result.truncated, false)
 
   // git 自己的文件头只在 hunk 之外被识别为 meta。
-  assert.deepEqual(result.rows.slice(0, 4).map(row => row.kind), ['meta', 'meta', 'meta', 'meta'])
+  assert.deepEqual(
+    result.rows.slice(0, 4).map((row) => row.kind),
+    ['meta', 'meta', 'meta', 'meta'],
+  )
   assert.deepEqual(result.rows[4].kind, 'hunk')
 
-  const ctx = result.rows.find(row => row.kind === 'ctx')
+  const ctx = result.rows.find((row) => row.kind === 'ctx')
   assert.deepEqual([ctx.oldLine, ctx.newLine, ctx.text], [1, 1, 'keep'])
-  const del = result.rows.find(row => row.kind === 'del')
+  const del = result.rows.find((row) => row.kind === 'del')
   assert.deepEqual([del.oldLine, del.newLine, del.text], [2, null, 'gone'])
-  const add = result.rows.filter(row => row.kind === 'add')[0]
+  const add = result.rows.filter((row) => row.kind === 'add')[0]
   assert.deepEqual([add.oldLine, add.newLine, add.text], [null, 2, 'added'])
-  assert.equal(result.rows.filter(row => row.kind === 'add')[1].newLine, 3)
+  assert.equal(result.rows.filter((row) => row.kind === 'add')[1].newLine, 3)
 
   // 第二个 hunk 从自己的起点重新计数。
-  const second = result.rows.filter(row => row.kind === 'del')[1]
+  const second = result.rows.filter((row) => row.kind === 'del')[1]
   assert.deepEqual([second.oldLine, second.text], [20, 'x'])
-  const lastAdd = result.rows.filter(row => row.kind === 'add')[2]
+  const lastAdd = result.rows.filter((row) => row.kind === 'add')[2]
   assert.deepEqual([lastAdd.newLine, lastAdd.text], [21, 'y'])
 })
 
@@ -73,7 +75,7 @@ test('解析：内容行以 -- / ++ / @@ 开头不会被误判成文件头或 hu
 
   const result = parseDiff(raw)
   assert.equal(result.hunks, 1, '内容行里的 @@ 不算新 hunk')
-  const kinds = result.rows.slice(4).map(row => row.kind)
+  const kinds = result.rows.slice(4).map((row) => row.kind)
   assert.deepEqual(kinds, ['del', 'add', 'ctx'], '按 diff 前缀解释，而不是按内容')
   assert.equal(result.rows[4].text, '--starts with dashes')
   assert.equal(result.rows[5].text, '++starts with pluses')
@@ -81,7 +83,10 @@ test('解析：内容行以 -- / ++ / @@ 开头不会被误判成文件头或 hu
 })
 
 test('解析：二进制与行数上限', () => {
-  assert.equal(parseDiff('diff --git a/b.bin b/b.bin\nBinary files a/b.bin and b/b.bin differ\n').binary, true)
+  assert.equal(
+    parseDiff('diff --git a/b.bin b/b.bin\nBinary files a/b.bin and b/b.bin differ\n').binary,
+    true,
+  )
   assert.equal(parseDiff('GIT binary patch\n').binary, true)
 
   const many = ['@@ -1,1 +1,3000 @@']
@@ -127,59 +132,72 @@ async function makeRepo() {
   return dir
 }
 
-test('未暂存的修改：工作区侧有 rows，已暂存侧为空', { skip: !HAS_GIT && 'git 不可用' }, async () => {
-  const dir = await makeRepo()
-  try {
-    await writeFile(path.join(dir, 'tracked.txt'), 'line1\nchanged\nline3\n')
+test(
+  '未暂存的修改：工作区侧有 rows，已暂存侧为空',
+  { skip: !HAS_GIT && 'git 不可用' },
+  async () => {
+    const dir = await makeRepo()
+    try {
+      await writeFile(path.join(dir, 'tracked.txt'), 'line1\nchanged\nline3\n')
 
-    const result = await readDiff(dir, 'tracked.txt')
-    assert.equal(result.untracked, false)
-    assert.equal(result.worktree.additions, 1)
-    assert.equal(result.worktree.deletions, 1)
-    assert.equal(result.worktree.rows.filter(row => row.kind === 'add')[0].text, 'changed')
-    assert.equal(result.index.rows.length, 0, '尚未暂存')
-  }
-  finally {
-    await rm(dir, { recursive: true, force: true })
-  }
-})
+      const result = await readDiff(dir, 'tracked.txt')
+      assert.equal(result.untracked, false)
+      assert.equal(result.worktree.additions, 1)
+      assert.equal(result.worktree.deletions, 1)
+      assert.equal(result.worktree.rows.filter((row) => row.kind === 'add')[0].text, 'changed')
+      assert.equal(result.index.rows.length, 0, '尚未暂存')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  },
+)
 
-test('已暂存的修改：两侧各自读回（暂存后工作区侧为空）', { skip: !HAS_GIT && 'git 不可用' }, async () => {
-  const dir = await makeRepo()
-  try {
-    await writeFile(path.join(dir, 'tracked.txt'), 'staged line\n')
-    execFileSync('git', ['add', 'tracked.txt'], { cwd: dir, stdio: 'ignore' })
+test(
+  '已暂存的修改：两侧各自读回（暂存后工作区侧为空）',
+  { skip: !HAS_GIT && 'git 不可用' },
+  async () => {
+    const dir = await makeRepo()
+    try {
+      await writeFile(path.join(dir, 'tracked.txt'), 'staged line\n')
+      execFileSync('git', ['add', 'tracked.txt'], { cwd: dir, stdio: 'ignore' })
 
-    const stagedOnly = await readDiff(dir, 'tracked.txt')
-    assert.equal(stagedOnly.index.additions, 1)
-    assert.equal(stagedOnly.worktree.rows.length, 0)
+      const stagedOnly = await readDiff(dir, 'tracked.txt')
+      assert.equal(stagedOnly.index.additions, 1)
+      assert.equal(stagedOnly.worktree.rows.length, 0)
 
-    // 再改一次：两侧同时有内容。
-    await writeFile(path.join(dir, 'tracked.txt'), 'staged line\nplus worktree\n')
-    const both = await readDiff(dir, 'tracked.txt')
-    assert.ok(both.index.rows.length > 0, '已暂存侧有内容')
-    assert.ok(both.worktree.rows.length > 0, '工作区侧也有内容')
-  }
-  finally {
-    await rm(dir, { recursive: true, force: true })
-  }
-})
+      // 再改一次：两侧同时有内容。
+      await writeFile(path.join(dir, 'tracked.txt'), 'staged line\nplus worktree\n')
+      const both = await readDiff(dir, 'tracked.txt')
+      assert.ok(both.index.rows.length > 0, '已暂存侧有内容')
+      assert.ok(both.worktree.rows.length > 0, '工作区侧也有内容')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  },
+)
 
-test('未跟踪文件：与空文件对比，且会标记 untracked', { skip: !HAS_GIT && 'git 不可用' }, async () => {
-  const dir = await makeRepo()
-  try {
-    await writeFile(path.join(dir, 'fresh.txt'), 'a\nb\n')
+test(
+  '未跟踪文件：与空文件对比，且会标记 untracked',
+  { skip: !HAS_GIT && 'git 不可用' },
+  async () => {
+    const dir = await makeRepo()
+    try {
+      await writeFile(path.join(dir, 'fresh.txt'), 'a\nb\n')
 
-    const result = await readDiff(dir, 'fresh.txt')
-    assert.equal(result.untracked, true)
-    assert.equal(result.worktree.hunks, 1)
-    assert.equal(result.worktree.rows.filter(row => row.kind === 'add').length, 2, '整份文件都是新增')
-    assert.equal(result.index.rows.length, 0)
-  }
-  finally {
-    await rm(dir, { recursive: true, force: true })
-  }
-})
+      const result = await readDiff(dir, 'fresh.txt')
+      assert.equal(result.untracked, true)
+      assert.equal(result.worktree.hunks, 1)
+      assert.equal(
+        result.worktree.rows.filter((row) => row.kind === 'add').length,
+        2,
+        '整份文件都是新增',
+      )
+      assert.equal(result.index.rows.length, 0)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  },
+)
 
 test('删除文件也能读出差异', { skip: !HAS_GIT && 'git 不可用' }, async () => {
   const dir = await makeRepo()
@@ -187,8 +205,7 @@ test('删除文件也能读出差异', { skip: !HAS_GIT && 'git 不可用' }, as
     await unlink(path.join(dir, 'gone.txt'))
     const result = await readDiff(dir, 'gone.txt')
     assert.equal(result.worktree.deletions, 1)
-  }
-  finally {
+  } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
@@ -199,9 +216,12 @@ test('二进制文件只报 binary', { skip: !HAS_GIT && 'git 不可用' }, asyn
     await writeFile(path.join(dir, 'bin.dat'), Buffer.from([0, 9, 9, 0, 4, 4, 4]))
     const result = await readDiff(dir, 'bin.dat')
     assert.equal(result.worktree.binary, true)
-    assert.equal(result.worktree.rows.filter(row => row.kind === 'add').length, 0, '不冒充文本差异')
-  }
-  finally {
+    assert.equal(
+      result.worktree.rows.filter((row) => row.kind === 'add').length,
+      0,
+      '不冒充文本差异',
+    )
+  } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
@@ -212,8 +232,7 @@ test('非仓库目录返回 repo: null 而不是抛错', { skip: !HAS_GIT && 'gi
     const result = await readDiff(dir, 'whatever.txt')
     assert.equal(result.repo, null)
     assert.deepEqual(result.worktree.rows, [])
-  }
-  finally {
+  } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })

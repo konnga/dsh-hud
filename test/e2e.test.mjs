@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
-import { CHANNEL } from '../lib/index.js'
+import { CHANNEL } from '../lib/host/index.js'
 import { mount, rpcCall } from './helpers.mjs'
 
 /**
@@ -17,8 +17,7 @@ const HAS_GIT = (() => {
   try {
     execFileSync('git', ['--version'], { stdio: 'ignore' })
     return true
-  }
-  catch {
+  } catch {
     return false
   }
 })()
@@ -47,11 +46,29 @@ test('status 端点返回浏览器半要读的全部字段', { skip: !HAS_GIT &&
     const status = result.value
 
     // 胶囊读这些
-    for (const key of ['repo', 'branch', 'detached', 'oid', 'upstream', 'ahead', 'behind', 'dirty']) {
+    for (const key of [
+      'repo',
+      'branch',
+      'detached',
+      'oid',
+      'upstream',
+      'ahead',
+      'behind',
+      'dirty',
+    ]) {
       assert.ok(key in status, `缺少胶囊要读的字段 ${key}`)
     }
     // 面板概览读这些
-    for (const key of ['modified', 'added', 'deleted', 'renamed', 'copied', 'typeChanged', 'untracked', 'conflicted']) {
+    for (const key of [
+      'modified',
+      'added',
+      'deleted',
+      'renamed',
+      'copied',
+      'typeChanged',
+      'untracked',
+      'conflicted',
+    ]) {
       assert.ok(key in status.counts, `缺少计数 ${key}`)
     }
     // 面板清单读这些
@@ -65,9 +82,8 @@ test('status 端点返回浏览器半要读的全部字段', { skip: !HAS_GIT &&
     assert.equal(status.dirty, true)
     assert.equal(status.counts.modified, 1)
     assert.equal(status.counts.untracked, 1)
-    assert.ok(status.changes.some(change => change.path === 'fresh.txt'))
-  }
-  finally {
+    assert.ok(status.changes.some((change) => change.path === 'fresh.txt'))
+  } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
@@ -79,7 +95,9 @@ test('端到端的失败码是浏览器半能翻译的那些', { skip: !HAS_GIT 
   assert.equal(relative.ok, false)
   assert.equal(relative.error.details.code, 'invalid-cwd')
 
-  const missing = await rpcCall(handler, CHANNEL, 'status', { args: { cwd: path.join(tmpdir(), 'dsh-hud-absent-dir') } })
+  const missing = await rpcCall(handler, CHANNEL, 'status', {
+    args: { cwd: path.join(tmpdir(), 'dsh-hud-absent-dir') },
+  })
   assert.equal(missing.ok, false)
   assert.equal(missing.error.details.code, 'no-cwd')
 
@@ -96,50 +114,61 @@ test('两个半边写死的通道前缀完全一致', () => {
   assert.equal(match[1], CHANNEL)
 })
 
-test('diff 端点返回两侧已解析的 rows，浏览器半只负责渲染', { skip: !HAS_GIT && 'git 不可用' }, async () => {
-  const dir = await makeRepo()
-  try {
-    await writeFile(path.join(dir, 'a.txt'), 'changed\n')
+test(
+  'diff 端点返回两侧已解析的 rows，浏览器半只负责渲染',
+  { skip: !HAS_GIT && 'git 不可用' },
+  async () => {
+    const dir = await makeRepo()
+    try {
+      await writeFile(path.join(dir, 'a.txt'), 'changed\n')
 
-    const { handler } = mount()
-    const result = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: dir, path: 'a.txt' } })
+      const { handler } = mount()
+      const result = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: dir, path: 'a.txt' } })
 
-    assert.equal(result.ok, true, `期望成功，实际 ${JSON.stringify(result)}`)
-    const value = result.value
-    assert.equal(value.path, 'a.txt')
-    assert.equal(value.untracked, false)
-    for (const key of ['rows', 'additions', 'deletions', 'hunks', 'binary', 'truncated']) {
-      assert.ok(key in value.worktree, `工作区侧缺少 ${key}`)
-      assert.ok(key in value.index, `已暂存侧缺少 ${key}`)
-    }
-    for (const row of value.worktree.rows) {
-      for (const key of ['kind', 'text', 'oldLine', 'newLine']) {
-        assert.ok(key in row, `row 缺少 ${key}`)
+      assert.equal(result.ok, true, `期望成功，实际 ${JSON.stringify(result)}`)
+      const value = result.value
+      assert.equal(value.path, 'a.txt')
+      assert.equal(value.untracked, false)
+      for (const key of ['rows', 'additions', 'deletions', 'hunks', 'binary', 'truncated']) {
+        assert.ok(key in value.worktree, `工作区侧缺少 ${key}`)
+        assert.ok(key in value.index, `已暂存侧缺少 ${key}`)
       }
+      for (const row of value.worktree.rows) {
+        for (const key of ['kind', 'text', 'oldLine', 'newLine']) {
+          assert.ok(key in row, `row 缺少 ${key}`)
+        }
+      }
+      assert.equal(value.worktree.additions, 1)
+      assert.equal(value.index.rows.length, 0)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
     }
-    assert.equal(value.worktree.additions, 1)
-    assert.equal(value.index.rows.length, 0)
-  }
-  finally {
-    await rm(dir, { recursive: true, force: true })
-  }
-})
+  },
+)
 
 test('diff 端点拒绝越界路径与非法 cwd，且走信封错误', async () => {
   const { handler } = mount()
 
-  const escaping = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: '/tmp', path: '../../etc/passwd' } })
+  const escaping = await rpcCall(handler, CHANNEL, 'diff', {
+    args: { cwd: '/tmp', path: '../../etc/passwd' },
+  })
   assert.equal(escaping.ok, false)
   assert.equal(escaping.error.details.code, 'invalid-path')
 
-  const absolute = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: '/tmp', path: '/etc/passwd' } })
+  const absolute = await rpcCall(handler, CHANNEL, 'diff', {
+    args: { cwd: '/tmp', path: '/etc/passwd' },
+  })
   assert.equal(absolute.ok, false)
   assert.equal(absolute.error.details.code, 'invalid-path')
 
-  const dashed = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: '/tmp', path: '--upload-pack=evil' } })
+  const dashed = await rpcCall(handler, CHANNEL, 'diff', {
+    args: { cwd: '/tmp', path: '--upload-pack=evil' },
+  })
   assert.equal(dashed.error.details.code, 'invalid-path')
 
-  const badCwd = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: 'relative', path: 'a.txt' } })
+  const badCwd = await rpcCall(handler, CHANNEL, 'diff', {
+    args: { cwd: 'relative', path: 'a.txt' },
+  })
   assert.equal(badCwd.error.details.code, 'invalid-cwd')
 
   const noPath = await rpcCall(handler, CHANNEL, 'diff', { args: { cwd: '/tmp' } })
@@ -164,12 +193,11 @@ test('log 端点返回最近提交，且条数被钳制', { skip: !HAS_GIT && 'g
       assert.ok(key in newest, `提交缺少字段 ${key}`)
     }
     assert.equal(newest.subject, 'second')
-    assert.ok(newest.refs.some(ref => ref.startsWith('HEAD')))
+    assert.ok(newest.refs.some((ref) => ref.startsWith('HEAD')))
 
     const clamped = await rpcCall(handler, CHANNEL, 'log', { args: { cwd: dir, count: 999 } })
     assert.ok(clamped.value.commits.length <= 50)
-  }
-  finally {
+  } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
@@ -186,8 +214,7 @@ test('log 端点：非仓库与非法 cwd 的行为', { skip: !HAS_GIT && 'git �
     const badCwd = await rpcCall(handler, CHANNEL, 'log', { args: { cwd: 'relative' } })
     assert.equal(badCwd.ok, false)
     assert.equal(badCwd.error.details.code, 'invalid-cwd')
-  }
-  finally {
+  } finally {
     await rm(plain, { recursive: true, force: true })
   }
 })
@@ -207,7 +234,16 @@ test('commit 端点返回浏览器半要读的元信息与清单', { skip: !HAS_
 
     const result = await rpcCall(handler, CHANNEL, 'commit', { args: { cwd: dir, sha: short } })
     assert.equal(result.ok, true, `期望成功，实际 ${JSON.stringify(result)}`)
-    for (const key of ['sha', 'shortSha', 'subject', 'author', 'date', 'committedAt', 'refs', 'merge']) {
+    for (const key of [
+      'sha',
+      'shortSha',
+      'subject',
+      'author',
+      'date',
+      'committedAt',
+      'refs',
+      'merge',
+    ]) {
       assert.ok(key in result.value.commit, `提交缺少字段 ${key}`)
     }
     assert.equal(result.value.commit.subject, 'second')
@@ -218,9 +254,8 @@ test('commit 端点返回浏览器半要读的元信息与清单', { skip: !HAS_
         assert.ok(key in file, `提交清单项缺少字段 ${key}`)
       }
     }
-    assert.deepEqual(result.value.files.map(file => file.file).sort(), ['a.txt', 'fresh.txt'])
-  }
-  finally {
+    assert.deepEqual(result.value.files.map((file) => file.file).sort(), ['a.txt', 'fresh.txt'])
+  } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
@@ -235,7 +270,9 @@ test('commit-diff 端点返回单侧已解析的 rows', { skip: !HAS_GIT && 'git
     const { handler } = mount()
     // 只收十六进制 sha（`HEAD`、`HEAD~1` 这类 rev 表达式一律拒绝），所以先解析出来。
     const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
-    const result = await rpcCall(handler, CHANNEL, 'commit-diff', { args: { cwd: dir, sha, path: 'a.txt' } })
+    const result = await rpcCall(handler, CHANNEL, 'commit-diff', {
+      args: { cwd: dir, sha, path: 'a.txt' },
+    })
 
     assert.equal(result.ok, true, `期望成功，实际 ${JSON.stringify(result)}`)
     const value = result.value
@@ -251,8 +288,7 @@ test('commit-diff 端点返回单侧已解析的 rows', { skip: !HAS_GIT && 'git
       }
     }
     assert.equal(value.additions, 1, '新增的那一行')
-  }
-  finally {
+  } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
@@ -270,12 +306,18 @@ test('commit / commit-diff：非法 sha 与越界路径都走信封错误', asyn
   const noSha = await rpcCall(handler, CHANNEL, 'commit', { args: { cwd: '/tmp' } })
   assert.equal(noSha.error.details.code, 'invalid-sha')
 
-  const badPath = await rpcCall(handler, CHANNEL, 'commit-diff', { args: { cwd: '/tmp', sha: '2eed74e', path: '../../etc/passwd' } })
+  const badPath = await rpcCall(handler, CHANNEL, 'commit-diff', {
+    args: { cwd: '/tmp', sha: '2eed74e', path: '../../etc/passwd' },
+  })
   assert.equal(badPath.error.details.code, 'invalid-path')
 
-  const badOrig = await rpcCall(handler, CHANNEL, 'commit-diff', { args: { cwd: '/tmp', sha: '2eed74e', path: 'a.txt', origPath: '/etc/passwd' } })
+  const badOrig = await rpcCall(handler, CHANNEL, 'commit-diff', {
+    args: { cwd: '/tmp', sha: '2eed74e', path: 'a.txt', origPath: '/etc/passwd' },
+  })
   assert.equal(badOrig.error.details.code, 'invalid-path')
 
-  const badCwd = await rpcCall(handler, CHANNEL, 'commit-diff', { args: { cwd: 'relative', sha: '2eed74e', path: 'a.txt' } })
+  const badCwd = await rpcCall(handler, CHANNEL, 'commit-diff', {
+    args: { cwd: 'relative', sha: '2eed74e', path: 'a.txt' },
+  })
   assert.equal(badCwd.error.details.code, 'invalid-cwd')
 })

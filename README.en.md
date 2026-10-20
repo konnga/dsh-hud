@@ -165,11 +165,14 @@ With the composer empty, `↑` brings back your previous prompt; keep pressing t
 
 ## Development
 
-- `lib/index.js` — the host half (runs git, serves `/dsh-hud-rpc`).
-- `lib/client.js` — the browser half (**no build step**, hand-written JS, depends only on the seed module `react`).
-- `npm test` — the whole suite (`node --test test/*.test.mjs`). No dependencies to install.
+- `src/host/**` — the host half's source (TypeScript; runs git, serves `/dsh-hud-rpc`), compiled file-by-file by `tsc` into `lib/host/**`.
+- `src/client/**` — the browser half's source (TypeScript; depends only on the seed module `react`); `lib/client.js` is a **build artifact** (rolldown), because DSH loads exactly one classic script.
+- Convention: `src/` is all source, `lib/` is all artifacts — `pnpm run build` rebuilds both halves (`tsc -p tsconfig.host.json` + `rolldown`), and artifacts are committed together with the source (DSH and the local profile read `lib/` directly).
+- `pnpm test` — typecheck (both halves are under **full `strict`**) + the whole suite.
+- `pnpm run format` — Prettier formats the sources (`.prettierrc.json`; `lib/` is artifacts and is not formatted); `pnpm run format:check` only checks.
+- The package manager is pnpm: `pnpm-lock.yaml` is committed, and `pnpm-workspace.yaml` disables `autoInstallPeers` because DSH provides those client services at runtime.
 - `docs/dock-slot-host.md` — a proposal for turning the row above the composer into a registrable inline host.
-- **Releasing**: `npm run tag && npm publish`. `prepublishOnly` runs the tests and then verifies version ↔ git tag (clean tree, `v<version>` exists and points at HEAD); a mismatch blocks the publish.
+- **Releasing**: `pnpm run tag && pnpm publish`. `prepublishOnly` runs the tests and then verifies version ↔ git tag (clean tree, `v<version>` exists and points at HEAD); a mismatch blocks the publish.
 
 ## License
 

@@ -1,0 +1,5 @@
+# 产物与第三方内容不格式化：lib/ 全部是 build 产物（tsc / rolldown 自己管缩进）。
+lib/
+node_modules/
+package-lock.json
+docs/images/
