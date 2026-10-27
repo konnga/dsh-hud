@@ -27,7 +27,7 @@ For local development, point the profile at the checkout (host changes apply imm
 | **Git capsule** | Workspace name, branch, ahead/behind, change counts, files this session touched | Leftmost of the row above the composer (click to open the panel) |
 | **Tools capsule** | What is running now (live seconds), per-tool call counts, skills used | Same row, middle |
 | **Session timer capsule** | How long this session has been running; hover for model/tool wall time and turns | Same row, rightmost (after the balance) |
-| **Balance capsule** | **Follows the current session's model provider**: the official account for the platform ledger, that relay's own balance for a relay; `⚠` low-balance warning, **click to paste a dashboard token** (that is how the relay's current balance becomes readable), hover shows balance / API requests / account usage / key usage | Same row, before the timer |
+| **Balance capsule** | **Follows the current session's model provider**: the official account for the platform ledger, that relay's own balance for a relay; `⚠` low-balance warning, **click to paste a web token** (that is how the relay's current balance becomes readable), hover shows balance / API requests / account usage / key usage | Same row, before the timer |
 | **Panel** | Change overview, change list, recent commits, tags; click any row for its diff | Click the Git capsule |
 | **Diffs, commit detail, images** | Unstaged / staged, word wrap, copy diff; image side-by-side + zoom | Right of the panel, draggable |
 | **Per-turn image changes** | Images touched this turn: click to view one, `⇄` for before/after | Next to the built-in "edited N files" card |
@@ -104,7 +104,7 @@ Here it is on a real machine:
 | Unrecognised relay (neither protocol answers) | the site id plus `--` (unreadable, said plainly) | `api404 --` |
 | Not resolved yet (new session / just switched / host not ready) | `--` (**never** the platform account balance as a stand-in) | `--` |
 
-With a dashboard credential configured, a relay capsule's hover looks like this — four readings coloured by meaning
+With a web token configured, a relay capsule's hover looks like this — four readings coloured by meaning
 (see below for why):
 
 ![Hovering a relay balance capsule: the bubble reads the site name happycoding, then "balance $137.48" in green, "API requests 3,514" in blue, "$7.51 used on this account" in amber, "$1.24 used on this key" in amber, and "updated 2026-10-27 16:45" in grey; below it the capsule itself "$137.48" and the timer capsule "⏱ 7d 4h 4m"](docs/images/balance-hover.webp)
@@ -134,55 +134,6 @@ page** in a new tab. A low balance is signalled by the `⚠` and warning colour 
   The subtraction aligns decimals and works on integers, so `8.6 - 8.3` is exactly `0.30` — never `0.2999999999999998`.
 - It refreshes every 5 minutes (it costs a real Platform request, and the balance only moves by the minute); **click** to refresh immediately.
 
-### Relay account balance: why some sites can only report usage
-
-The new-api family (`ur` / `muyuan` / `happycoding` / `ccwu` all are) splits its data behind two different auth schemes:
-
-| Endpoint | Accepts | Returns | Measured (`ur`) |
-| --- | --- | --- | --- |
-| `GET /dashboard/billing/subscription` | ✅ API key | the quota ceiling | `hard_limit_usd: 100000000` (a **placeholder**) |
-| `GET /dashboard/billing/usage` | ✅ API key | cumulative usage of **this key** | `$479.44` |
-| `GET /api/user/self` | ❌ **dashboard credential only** (PAT / login session; behind `UserAuth()`) | **account** balance + account cumulative usage + request count | `$855.69` / `$526.66` / `3685` |
-| `GET /api/usage/token/` | ✅ API key | this key's own quota view (`unlimited_quota: true` here) | `total_available: -199583909` |
-
-So the **account balance** (the console's "current balance") has exactly one readable path, and it rejects `sk` keys.
-To see it, configure a **dashboard credential** for that site — **click the balance capsule** and a small panel appears:
-
-```
-┌─ Add a dashboard access token ────── ur ─┐
-│ This site only exposes its current       │
-│ balance to a dashboard session (API      │
-│ keys cannot read it). Create an access   │
-│ token with the profile:read scope, then  │
-│ paste it here.                           │
-│ [••••••••••••••••••••]                   │
-│ Will be written to UR_ACCESS_TOKEN       │
-│                          [Save] [Cancel] │
-└──────────────────────────────────────────┘
-```
-
-- Where to get it: the site's "personal settings → access tokens", with the **`profile:read`** scope (long-lived).
-  Older deployments without that page also accept a login session token copied from the browser's `user.token` (expires).
-- **No editing of `~/.dsh/.credentials.yaml`**: the reference name (`UR_ACCESS_TOKEN`) is derived from `UR_API_KEY`,
-  and the write goes through DSH's credentials service. Making users hand-edit that file turns "configure a token" into
-  "edit a config file" — one bad indent and the whole credential store stops parsing.
-- The token is **never echoed**: a `password` input, never in localStorage, never in logs, never in the snapshot,
-  and the host never sends it back to the browser (the response carries only the reference name).
-- Saving refetches immediately (bypassing the host's 60-second cache) and the panel closes itself.
-- When the token expires (new device, sign-out, site reset) it **falls back to the usage path automatically**.
-  Sites without a credential keep reporting usage; a `ur —` capsule is the "no credential yet" state and opens the same panel.
-
-- **No hardcoded conversion rate**: `quota` is an integer; dividing by the `quota_per_unit` the site publishes in `/api/status`
-  (measured `500000` on `ur`) gives the amount, and non-USD sites are converted with their own published `usd_exchange_rate`.
-  Only when the scale is unreadable does it fall back to new-api's default, and that fallback is logged.
-  (All four sites report `quota_display_type: USD`, so the non-USD branch is defensive code for them.)
-- **Cross-checked digit for digit** (two independent passes, hours apart, each of the four numbers matching its own scale):
-  - `ur`: `427845000 / 500000 = $855.69`, `263330000 / 500000 = $526.66`, `request_count = 3685`;
-  - `happycoding` (the site in the screenshot above): `68725535 / 500000 = $137.45`, `3774465 / 500000 = $7.55`,
-    `request_count = 3525`, `total_usage = 127.0872 cents = $1.27` — the screenshot read `$137.48 / $7.51 / 3,514 / $1.24`,
-    and the difference is the usage that actually happened in those minutes (balance down, the other three up),
-    **not a conversion error**.
-
 ### When the capsule shows `--`
 
 The capsule only draws a reading it actually has. When it has none — not yet, or not readable —
@@ -202,11 +153,11 @@ leaves the previous session's site and amount on screen — that is another ledg
 
 ### The two "used" figures are two different ledgers
 
-Once a dashboard credential is configured, the hover lists **account** and **this key** usage side by side — they differ:
+Once a web token is configured, the hover lists **account** and **this key** usage side by side — they differ:
 
 ```
 happycoding
-balance $137.48                ← quota of /api/user/self ÷ quota_per_unit
+balance $137.48                ← the site's quota from /api/user/self ÷ its published unit
 API requests 3,514             ← request_count from the same response (right under the balance:
                                  it is the only count on this screen, not money)
 $7.51 used on this account     ← used_quota from the same response (whole account)
