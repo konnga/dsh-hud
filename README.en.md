@@ -105,7 +105,7 @@ Here it is on a real machine:
 | Not resolved yet (new session / just switched / host not ready) | `--` (**never** the platform account balance as a stand-in) | `--` |
 
 With a web token configured, a relay capsule's hover looks like this — four readings coloured by meaning
-(see below for why):
+(green = remaining, blue = a count, amber = already spent, grey = labels and timestamps):
 
 ![Hovering a relay balance capsule: the bubble reads the site name happycoding, then "balance $137.48" in green, "API requests 3,514" in blue, "$7.51 used on this account" in amber, "$1.24 used on this key" in amber, and "updated 2026-10-27 16:45" in grey; below it the capsule itself "$137.48" and the timer capsule "⏱ 7d 4h 4m"](docs/images/balance-hover.webp)
 
@@ -133,104 +133,6 @@ page** in a new tab. A low balance is signalled by the `⚠` and warning colour 
   it does not accumulate across restarts (we do not know what happened in between), which is why the wording says "since last refresh".
   The subtraction aligns decimals and works on integers, so `8.6 - 8.3` is exactly `0.30` — never `0.2999999999999998`.
 - It refreshes every 5 minutes (it costs a real Platform request, and the balance only moves by the minute); **click** to refresh immediately.
-
-### When the capsule shows `--`
-
-The capsule only draws a reading it actually has. When it has none — not yet, or not readable —
-it draws `--` and **never** substitutes the platform account balance: that number may belong to a
-different ledger than the one this session spends, so filling it in would report an unrelated figure.
-
-| State | Capsule |
-| --- | --- |
-| Reading available | `$742.23` |
-| Site known, unreadable (e.g. `api404`) | `api404 --` |
-| Site not even known yet (new session, just switched, host warming up) | `--` |
-| Host says the provider's ledger *is* the platform account | platform balance `⚠ ¥8.60` |
-
-Switching sessions clears the ledger **synchronously**: the previous ledger is gone the instant the new
-session binds (`unknown` → `--`), then the new session's model provider is queried. So a switch never
-leaves the previous session's site and amount on screen — that is another ledger's money.
-
-### The two "used" figures are two different ledgers
-
-Once a web token is configured, the hover lists **account** and **this key** usage side by side — they differ:
-
-```
-happycoding
-balance $137.48                ← the site's quota from /api/user/self ÷ its published unit
-API requests 3,514             ← request_count from the same response (right under the balance:
-                                 it is the only count on this screen, not money)
-$7.51 used on this account     ← used_quota from the same response (whole account)
-$1.24 used on this key         ← total_usage of /dashboard/billing/usage (this key only)
-updated 2026-10-27 16:45
-```
-
-On one site the two can differ substantially (here: `$7.51` on the account vs `$1.24` on this key — the gap is other keys
-on the same account; on `ur` it was `$526.66` vs `$479.44`), so they are **two fields and two lines**, not one field behind
-a flag — collapsing them would throw away a real reading.
-
-**Why three colours**: this screen holds three amounts and one count, so they are separated by meaning —
-
-| Colour | What uses it | Why |
-| --- | --- | --- |
-| green | balance | the common reading of "how much is left" |
-| blue | API requests | it is a **count**, not money; a third amount in the same colour reads as one |
-| amber | both "used" lines | a category colour ("this is spending"), **not** a warning |
-| grey | labels / site name / updated-at | timestamps and labels are not readings; colouring them means everything is coloured |
-
-All colours come from DSH's own theme tokens (`state-success-primary` / `state-business-primary` / `state-warn-primary`),
-which carry separate values for light and dark themes — no hardcoded hex.
-
-The line order is `balance → API requests → account usage → this key's usage`: the request count sits right under the
-balance because it is the only **count** on the screen rather than an amount, and sandwiched between two amounts it reads
-like a third one.
-
-### "Used" is not "this month"
-
-These sites **ignore `start_date` / `end_date`** (measured across four sites and four windows — identical answers),
-so the figure is cumulative. Since the range has no effect, the request asks for the full history and the label says cumulative —
-never a monthly label hinting at monthly arithmetic.
-
-### Balance for the current session's model provider
-
-Switch models inside one session and you switch ledgers — so the capsule follows **the provider the current model belongs to**:
-
-- **Which provider**: the host reads the session's `modelSelection` projection (`next ?? lastUsed`, so a model just picked in the menu counts before the first message is sent).
-- **Where to query**: the `baseURL` and credential reference are read live from the **Settings → Models** projection — no second copy that could drift from the user's edits.
-- **Credential**: resolved once from DSH's `credentials` service and sent **only to that provider's own baseURL**; never logged, never returned to the browser, never persisted.
-- **Three protocols** (measured 2026-10-27 against a real local configuration):
-
-| Source | Endpoint | Fields | Measured |
-| --- | --- | --- | --- |
-| Platform account | DSH `remote.account.getBalance` | wallet array | already in use; the host does not re-fetch |
-| Official API key | `GET {origin}/user/balance` | `balance_infos[].total_balance` (+ `granted_balance`) | `200`, `-0.19 CNY` |
-| Relay (one-api / new-api family) | `GET {base}/dashboard/billing/subscription` + `/usage` | `hard_limit_usd` (**remaining**) + `total_usage` (**cents**) | `muyuan` → remaining `2265.33`, used `212.74` |
-
-Three things the implementation states plainly rather than papering over:
-
-1. **`hard_limit_usd` is remaining quota, not a total** — so used is **not** subtracted again. Writing `limit - used` would understate the balance.
-2. **`total_usage` is in cents** — measured `21274.26` matches the site's `$212.74`.
-3. **`1e8` is an "unlimited" sentinel** — measured on `ur` / `ccwu` / `happycoding`: two probes both returned `100000000` while real usage was climbing. Remaining quota is then **not computable**, so the capsule reports "used" rather than passing off `1e8 - used` as a balance.
-
-Boundaries:
-
-- An unrecognised relay (measured `api404`: both paths 404/502) reports `unsupported` and the capsule renders `api404 --`.
-  **No number is drawn** (it never falls back to the platform account's balance — that is a different ledger), but the capsule does not vanish either:
-  a `—` is a reading ("this ledger can't be read"), while a blank is just a doubt that sends people off to check logs and reinstall.
-- No currency conversion: relay fields are named `*_usd` but some sites account in CNY 1:1 internally; only the site's own stated figures are repeated.
-- **Some sites expose remaining quota only to a web session** (measured on `ur`: `/api/user/self` answers `401 AUTH_UNAUTHORIZED`
-  while `/dashboard/billing/*` is readable with an API key). The capsule then reports usage only instead of pretending to know the remainder —
-  it neither guesses nor rides your web session (that would mean private requests with your account credentials, broken by any site change).
-- Caching: 60 s client TTL, 60 s per-provider host cache, 8 s request timeout. Relays rate-limit aggressive polling, and that is how "can't read the balance" actually happens.
-- The client re-asks every 30 s (actual requests are gated by the TTL: 60 s on success, 30 s on failure): the first read often lands before the session projection is ready, and waiting five minutes would leave the capsule blank for that long.
-- A failed read keeps the previous numbers (a network blip must not make the capsule vanish); switching sessions re-reads immediately instead of reusing the previous session's ledger.
-- **Nothing to show, nothing drawn**: signed out, no account plugin, or no wallet at all — the capsule simply does not appear. It never fakes `¥0.00`.
-
-> Why spend totals are not in the capsule: DSH's account API returns **wallet balances only** (`getBalance`) plus the
-> account projection — it carries no spending numbers at all; that data exists only on DeepSeek's own usage page
-> (**right-click the capsule** to go straight there). The plugin does not scrape Platform-internal endpoints
-> (which needs the account credential and breaks whenever Platform changes), nor does it multiply tokens by a
-> self-invented price to produce a number that looks precise but is not.
 
 ### Panel (click the Git capsule)
 
