@@ -22,13 +22,13 @@ test('客户端插件面声明 apply 与三个硬依赖服务', () => {
   assert.deepEqual(exported.inject, ['slots', 'connection', 'locale'])
 })
 
-test('apply 注册六个座位：Git 胶囊（含计时与工具两枚）、悬停气泡、面板、轮尾图片条、⋯ 菜单摘要、悬停详情', () => {
+test('apply 注册七个座位：Git 胶囊（含计时与工具两枚）、悬停气泡、令牌面板、面板、轮尾图片条、⋯ 菜单摘要、悬停详情', () => {
   const { registrations } = mountClient()
 
   assert.equal(
     registrations.length,
-    6,
-    '应当注册六条座位 —— 工具与计时胶囊都在 Git 那一行里，不另注册',
+    7,
+    '应当注册七条座位 —— 工具与计时胶囊都在 Git 那一行里，不另注册',
   )
   const byId = Object.fromEntries(registrations.map((entry) => [entry.options.id, entry.options]))
   assert.deepEqual(Object.keys(byId).sort(), [
@@ -37,6 +37,7 @@ test('apply 注册六个座位：Git 胶囊（含计时与工具两枚）、悬�
     'dsh-hud-pill-tip',
     'dsh-hud-session-hover',
     'dsh-hud-session-menu',
+    'dsh-hud-token-panel',
     'dsh-hud-turn-images',
   ])
   assert.equal(
@@ -45,6 +46,14 @@ test('apply 注册六个座位：Git 胶囊（含计时与工具两枚）、悬�
     '气泡浮在 dock 行之外，才不被行内裁切',
   )
   assert.ok(byId['dsh-hud-pill-tip'].order < byId['dsh-hud-panel'].order, '面板开着时仍压在最上层')
+  assert.ok(
+    byId['dsh-hud-token-panel'].order > byId['dsh-hud-pill-tip'].order,
+    '令牌面板盖住悬停气泡',
+  )
+  assert.ok(
+    byId['dsh-hud-token-panel'].order < byId['dsh-hud-panel'].order,
+    '但主面板仍然压在令牌面板之上',
+  )
   const dockEntries = registrations.filter(
     (entry) => entry.options.name === 'conversation.input.dock',
   )
@@ -114,11 +123,18 @@ test('apply 装上词典、自有样式与两个轮询定时器（面板状态 /
   assert.ok(styles[0].textContent.includes('.dshh-panel'), '样式表要覆盖自己的类名')
   assert.ok(styles[0].textContent.includes('--dsw-alias-'), '配色走主题令牌')
   assert.ok(labels.includes('dsh-hud: session rows poll'))
-  // 三个节拍：面板 8s（跟着看的）、工具活动 3s（宿主是内存读，密一点才看得到"正在跑"）、
-  // 摘要 30s（只在悬停/⋯ 菜单里按需展示，没必要那么勤问 git）。
+  assert.ok(labels.includes('dsh-hud: account balance poll'))
+  assert.ok(labels.includes('dsh-hud: provider balance poll'))
+  // 四个 `setInterval` 节拍：面板 8s（跟着看的）、工具活动 3s（宿主是内存读，密一点才看得到
+  // "正在跑"）、摘要 30s（只在悬停/⋯ 菜单里按需展示，没必要那么勤问 git）、
+  // 账号余额 300s（打的是 DeepSeek 平台的网络，余额按分钟变，密了纯属浪费）。
+  //
+  // 模型来源余额那一路**不在这个列表里**：它改成了自适应 `setTimeout` 链 ——
+  // 还没问出来时 1 秒重问（重启后宿主常常还没就绪，固定 30 秒会让胶囊空等半分钟），
+  // 问出来之后才是 30 秒。这是刻意换掉的，不是漏了。
   assert.deepEqual(
     intervals.map((item) => item.ms).sort((left, right) => left - right),
-    [3000, 8000, 30000],
+    [3000, 8000, 30000, 300000],
   )
   assert.ok(listeners.has('focus'), '需要 focus 时补一次刷新')
 })

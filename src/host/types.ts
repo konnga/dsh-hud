@@ -322,9 +322,17 @@ export interface HudSession {
   [key: string]: unknown
 }
 
+/** `modelSelection` 投影里本模块关心的两格（`next` 优先于 `lastUsed`）。 */
+export interface HudModelSelection {
+  provider: string
+  model: string | null
+}
+
 /** 宿主 `sessions` 服务的最小接口。 */
 export interface HudSessionsService {
   list(): HudSession[]
+  /** 按 id 直接取（真实宿主服务有；没有时按 `list()` 扫）。 */
+  get?(id: string): unknown
 }
 
 /** `sessionStats` 投影折叠出来的累计数字。 */
@@ -357,6 +365,98 @@ export interface HudInjectedScope {
   sessions: HudSessionsService
   sessionProjections: HudSessionProjections
   [key: string]: unknown
+}
+
+/* --------------------------------------------------- 提供方余额（按模型来源） */
+
+/**
+ * 一个提供方的余额，读取方式由它自己的协议决定。
+ *
+ * 三种来源，语义**不许混**（这是这一片最容易糊掉的地方）：
+ *   - `account`：DeepSeek 平台账号（`remote.account.getBalance`），只回钱包；
+ *   - `official`：DeepSeek 官方 API Key 路线，`GET /user/balance` 回 `balance_infos`；
+ *   - `relay`：第三方中转站，走 OpenAI 兼容的 `/dashboard/billing/*` 一对接口
+ *     （one-api / new-api 家族），上限是"订阅额度"而不是钱包余额。
+ */
+export type HudProviderKind = 'account' | 'official' | 'relay'
+
+/** 一个钱包（币种 + 十进制字符串，和账号那一路同形）。 */
+export interface HudProviderWallet {
+  currency: string
+  balance: string
+}
+
+/** `provider-balance` 端点载荷。 */
+export interface HudProviderBalance {
+  /** 提供方 id（会话当前模型所属的那个）。 */
+  provider: string
+  kind: HudProviderKind
+  /** 站点自己的记账币种（**不做汇率换算**）。 */
+  currency: string | null
+  /** 剩余额度：只有能算出来时才有（中转站上限是占位值时算不出）。 */
+  remaining: string | null
+  /**
+   * **整个账号**的累计已用（`/api/user/self` 的 `used_quota`）。
+   *
+   * 与 `usedKey` 分开两个字段，不是靠一个 `scope` 标记：站点上这两个数**能同时拿到**
+   * （实测 ur：账号 $526.66 / 本 Key $479.44），也**能差出一大截**。
+   * 塞进一个字段就必须二选一，那等于主动丢掉一个真实读数。
+   */
+  usedAccount: string | null
+  /**
+   * **这枚 API Key** 的累计已用（`/dashboard/billing/usage` 的 `total_usage`）。
+   *
+   * 站点在这个接口上回的一直是"这枚 Key 的累计"，不是账号总量、也不是本月。
+   */
+  usedKey: string | null
+  /**
+   * 账号累计请求数（`/api/user/self` 的 `request_count`）。
+   *
+   * 只有账号那一路给得出；其余路径没有这个数就是 `null`（不编）。
+   */
+  requests?: number | null
+  /** 站点把上限写成占位值（典型 1e8）→ `remaining` 不可信，只能给"已用"。 */
+  placeholderLimit: boolean
+  wallets: HudProviderWallet[]
+  bonus: HudProviderWallet[]
+  /** 取数时刻（本地毫秒）。 */
+  at: number
+}
+
+/** 没有可展示结果时告诉界面**为什么**（不画胶囊，但可诊断）。 */
+export interface HudProviderBalanceFailure {
+  provider: string | null
+  kind: HudProviderKind | null
+  reason: 'no-session' | 'no-provider' | 'unknown-provider' | 'no-key' | 'unsupported' | 'network'
+  /** 供排查的短消息（不含任何密钥）。 */
+  message: string | null
+}
+
+/** 提供方取数所需的两个事实（从设置里读出来，**不落盘、不外传**）。 */
+export interface HudProviderFacts {
+  provider: string
+  kind: 'official' | 'relay'
+  baseURL: string
+  /** 凭据引用名（`MUYUAN_API_KEY` 这种），值由凭据服务解析。 */
+  apiKeyEnv: string
+  /**
+   * 后台（dashboard）凭据的引用名（`UR_API_KEY` → `UR_ACCESS_TOKEN`）。
+   *
+   * 为什么需要：new-api 把**账号余额**放在挂了 `UserAuth()` 的 `/api/user/self` 里，
+   * `sk-` API Key 走的是另一套 `TokenAuth`，读不到（只能读用量）。
+   * 配一枚后台凭据才拿得到"还剩多少"。
+   *
+   * 两种都能用，都放在 `Authorization: Bearer` 里：
+   *   - **PAT**（站点「访问令牌」，需 `profile:read` scope）——长期有效，首选；
+   *   - 老版本没有 PAT 时用浏览器 localStorage 里的登录令牌 —— 会过期。
+   */
+  accessTokenEnv?: string | null
+  /**
+   * `New-Api-User` 头的值来自哪枚凭据（`UR_USER_ID`）。
+   *
+   * 只有老版本 / 部分 fork 才校验这个头；new-api 主线里没有这个头，配了也无害。
+   */
+  userIdEnv?: string | null
 }
 
 /* ------------------------------------------------------------- 会话载荷 */

@@ -21,11 +21,22 @@ import { CSS } from './styles.js'
 import { HudDockPill } from './components/dock-pill.js'
 import { HudFloatingPanel } from './components/floating-panel.js'
 import { PillTip } from './components/pill-tip.js'
+import { TokenPanel } from './components/token-panel.js'
 import { SessionMenuSummary, SessionRowHoverChip } from './components/sidebar.js'
 import { TurnImages } from './components/turn-images.js'
 import { bindPromptHistory } from './composer.js'
 import { en, zh } from './i18n.js'
-import { NS, POLL_MS, ROWS_POLL_MS, TOOLS_POLL_MS, probe } from './shared.js'
+import {
+  BALANCE_POLL_MS,
+  NS,
+  POLL_MS,
+  PROVIDER_POLL_MS,
+  PROVIDER_RETRY_TICK_MS,
+  ROWS_POLL_MS,
+  TOOLS_POLL_MS,
+  probe,
+} from './shared.js'
+import { watchModelSelection } from './model-watch.js'
 import { createStore } from './store/index.js'
 import type { StoreContext } from './store/types.js'
 import { cssChipsGap, ensureStyles } from './styles-apply.js'
@@ -65,6 +76,8 @@ interface HudLocale {
 interface HudPluginContext extends StoreContext {
   slots: HudSlots
   locale: HudLocale
+  /** 按名取其它客户端服务；宿主没装那个半边时返回 `undefined`（`sessions` 就是软依赖）。 */
+  get: (name: string) => unknown
 }
 
 /* ---------------------------------------------------------------- 插件 */
@@ -122,6 +135,74 @@ export function apply(ctx: HudPluginContext): void {
     }
   }, 'dsh-hud: focus refresh')
 
+  // 余额（账号那一路 + 当前模型来源那一路）：**最慢的一条节拍**（默认 5 分钟）。
+  //
+  // 它背后是宿主替我们去 DeepSeek 平台查账（一次真实网络请求），而余额按分钟变；
+  // 页面隐藏时照例跳过。点击胶囊会带 `force` 立刻重取一次（见 `balance-pill.ts`）。
+  // 这一条起手也跑一次：胶囊要在首屏就出现，而不是等五分钟。
+  ctx.effect(function () {
+    store.loadBalance()
+    var id = window.setInterval(function () {
+      if (document.visibilityState === 'hidden') return
+      store.loadBalance()
+    }, BALANCE_POLL_MS)
+    return function () {
+      window.clearInterval(id)
+    }
+  }, 'dsh-hud: account balance poll')
+
+  /**
+   * 「当前会话模型来源」的余额：自己的节拍，比账号那一路快。
+   *
+   * 为什么是 30 秒而不是 5 分钟：第一次取数常常赶在投影就绪之前（刚开会话、刚换模型），
+   * 那时宿主答不上来；如果下一次机会在五分钟之后，胶囊就有五分钟是空白的。
+   * 真实请求次数由 store 自己的 TTL 兜着（成功 60s、失败 30s），这里只是"多久问一次"。
+   */
+  ctx.effect(function () {
+    var stopped = false
+    var handle: number | null = null
+
+    /**
+     * 下一次隔多久再问。
+     *
+     * 稳态是 `PROVIDER_POLL_MS`（30 秒）；**还没问出来**的时候用 1 秒重问 ——
+     * 这才是"重启后胶囊迟迟不出现"的症结：宿主在刚启动那一下常常还读不到模型选择投影，
+     * 第一次问必然落空，而原来的固定 30 秒节拍意味着胶囊要空半分钟。
+     * 真实请求次数仍由 store 的 TTL 兜着（成功 60s、失败按 1s 起指数退避到 30s），
+     * 这里只是"多久看一眼"，看的时候多半是空转。
+     */
+    function nextDelay(): number {
+      var ledger = store.getSnapshot().provider
+      var settled =
+        ledger !== undefined &&
+        ledger !== null &&
+        ledger.mode !== 'unknown' &&
+        typeof ledger.provider === 'string' &&
+        ledger.provider !== ''
+      return settled ? PROVIDER_POLL_MS : PROVIDER_RETRY_TICK_MS
+    }
+
+    function tick(): void {
+      if (stopped) return
+      if (document.visibilityState !== 'hidden') store.loadProviderBalance()
+      // 用 `window.setTimeout`（而不是裸 `setTimeout`）：测试 harness 只替换 `window.*`，
+      // 裸调用会落到真的 Node 定时器上 —— 表现就是"用例全过、进程永不退出"。
+      handle = window.setTimeout(tick, nextDelay())
+    }
+
+    tick()
+    return function () {
+      stopped = true
+      if (handle !== null) window.clearTimeout(handle)
+    }
+  }, 'dsh-hud: provider balance poll')
+
+  // 换模型 = 换账本：TTL 按时钟算、不按事实算，所以模型一变就得主动重取一次
+  // （否则切到 `ur` 之后会先盯着平台账号的 `¥8.60` 看满一分钟）。
+  ctx.effect(function () {
+    return watchModelSelection(ctx, store)
+  }, 'dsh-hud: model selection -> provider balance')
+
   // 悬停气泡单独一枚 overlay 座位：它要浮在 dock 行之外（行内会被裁切/堆叠上下文限制）。
   // order 比面板小 —— 面板开着时仍然压在最上层。
   ctx.slots.inject('shell.overlay', function () {
@@ -136,6 +217,22 @@ export function apply(ctx: HudPluginContext): void {
         },
       },
       PillTip,
+    )
+  })
+
+  // 后台令牌设置面板：与气泡同一层（都是浮在 dock 之上、面板之下）。
+  ctx.slots.inject('shell.overlay', function () {
+    return ctx.slots.register(
+      {
+        name: 'shell.overlay',
+        id: 'dsh-hud-token-panel',
+        order: 15,
+        locale: NS,
+        inject: function () {
+          return { store: store }
+        },
+      },
+      TokenPanel,
     )
   })
 

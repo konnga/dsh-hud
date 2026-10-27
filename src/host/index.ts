@@ -158,8 +158,15 @@ import {
   handleRequest,
   readBody,
   sendJson,
+  setProviderBalanceReader,
+  setProviderTokenWriter,
 } from './rpc.js'
 export { CHANNEL } from './rpc.js'
+
+import { createProviderBalanceReader, createProviderTokenWriter } from './provider-balance.js'
+import { defaultFetchDeps } from './providers.js'
+export { createProviderBalanceReader, createProviderTokenWriter } from './provider-balance.js'
+export { defaultFetchDeps, parseOfficialBalance, parseRelayBilling } from './providers.js'
 
 import {
   registerSoftDependencies,
@@ -217,6 +224,21 @@ export const inject = ['webServer', 'connection']
 export function apply(ctx: HudContext): void {
   rememberContext(ctx)
   trackSessionChanges(ctx)
+  // 「按当前会话的模型来源查余额」：读取器要 ctx（设置/凭据服务），端点表拿不到 ctx，
+  // 所以在这里装进去；卸载时清掉，避免下一个实例拿到悬空的 ctx。
+  const reader = createProviderBalanceReader(ctx, defaultFetchDeps())
+  setProviderBalanceReader(reader)
+  // 「把后台凭据写进凭据存储」的写入器：胶囊上的设置面板调它，用户不必去改
+  // `~/.dsh/.credentials.yaml`（改那个文件手滑一个缩进就整份凭据读不出来）。
+  const tokenWriter = createProviderTokenWriter(ctx)
+  setProviderTokenWriter(tokenWriter)
+  ctx.effect(
+    () => () => {
+      setProviderBalanceReader(null)
+      setProviderTokenWriter(null)
+    },
+    'dsh-hud: provider balance reader',
+  )
   ctx.effect(
     () =>
       ctx.webServer.register({

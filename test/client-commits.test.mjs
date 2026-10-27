@@ -325,10 +325,17 @@ test('提交明细（store）：点一行 → 取这次提交 → 自动打开�
   assert.equal(snapshot.diff.phase, 'ready')
   assert.equal(snapshot.diff.side, 'commit', '提交差异只有一个"侧"')
 
-  // status 与 session-changes 是"每轮刷新都搭车"的只读事实，这里只看这次提交相关的调用。
+  // status 与 session-changes 是"每轮刷新都搭车"的只读事实，`provider-balance` 是绑会话时
+  // 顺手问的余额账本（也不属于这次提交）—— 这里只看这次提交相关的调用。
   const first = calls.filter(
     (call) =>
-      !['status', 'session-changes', 'session-statuses', 'session-tools'].includes(call.endpoint),
+      ![
+        'status',
+        'session-changes',
+        'session-statuses',
+        'session-tools',
+        'provider-balance',
+      ].includes(call.endpoint),
   )
   assert.deepEqual(
     first.map((call) => call.endpoint),

@@ -4,13 +4,17 @@
  * 只放浏览器半内部的东西；跨模块（store ↔ 组件）的领域类型在 `../shared.js`。
  */
 
+import type { TipContent } from '../shared.js'
 import type {
   DiffSide,
+  HudBalance,
+  HudBalanceWallet,
   HudChange,
   HudCommitFile,
   HudCommitSummary,
   HudLogEntry,
   HudPromptHistory,
+  HudProviderLedger,
   HudSessionOverviewRow,
   HudSessionTime,
   HudState,
@@ -87,9 +91,72 @@ export interface SessionsService {
   binding(sessionId: string): TurnBinding | null | undefined
 }
 
-/** 动态注入交回来的子作用域（只声明 store 用到的那一项）。 */
+/**
+ * 账号接口的调用元数据（`@deepseek-ai/dsh-deepseek-account` 的 `AccountClientMetadata`）。
+ *
+ * 宿主拿它推导平台请求头（`x-client-version` / `x-client-locale` / 时区偏移），
+ * **一项都不能缺**：`version` 为空时 DSH 自己的 `accountClientMetadata()` 会直接抛，
+ * 所以我们从启动清单里取真实版本，取不到就不发请求。
+ */
+export interface AccountClientMetadata {
+  version: string
+  locale: string
+  timezoneOffsetSeconds: number
+}
+
+/** 一个钱包（平台原样给的十进制字符串）。 */
+export interface AccountWallet {
+  currency: string
+  balance: string
+}
+
+/** `account.getBalance` 的结果；`null` 表示当前没有登录态。 */
+export type AccountBalancePayload =
+  | null
+  | { status: 'failed' }
+  | { status: 'ready'; value: AccountWallet[]; bonusWallets: AccountWallet[] }
+
+/**
+ * 账号的"安全投影"（`AccountView` 的子集）：本插件只用它的两个链接。
+ *
+ * 余额接口只给钱包，**不给任何消费数字** —— 累计消耗、本月消耗都在平台用量页上，
+ * 所以这一枚胶囊的价值一半在于能一步跳到那一页。
+ */
+export interface AccountViewPayload {
+  status?: string
+  links?: { usageUrl?: string | null; topUpUrl?: string | null } | null
+  attempt?: unknown
+}
+
+/** 客户端 `remote.account` 命名空间里本插件用到的那两个方法。 */
+export interface AccountRemoteService {
+  getBalance(client: AccountClientMetadata): Promise<RpcResponse<AccountBalancePayload>>
+  /** 直连方法，不带调用元数据（宿主那边的状态是本地读，不碰网络）。 */
+  getState?(): Promise<RpcResponse<AccountViewPayload>>
+}
+
+/** 客户端 `remote` 命名空间（只声明 `account` 子服务）。 */
+export interface RemoteService {
+  account?: AccountRemoteService
+}
+
+/**
+ * 客户端 `modules` 服务：启动清单里带着**宿主这一版的发布身份**。
+ *
+ * 账号接口要用它当 `x-client-version`，而外部插件的产物里没有 DSH 在打包时内联的版本常量
+ * （内置插件那半边是 `"0.2.1-rc.3"` 这样的字面量），所以只能从启动清单里现取。
+ */
+export interface ModulesService {
+  manifest?: { release?: { version?: string; commit?: string } } | null
+}
+
+/** 动态注入交回来的子作用域（只声明 store 用到的那几项）。 */
 export interface InjectedScope {
   sessions: SessionsService
+  /** 账号命名空间（软依赖：没有这个服务时余额胶囊整个不出现）。 */
+  remote?: RemoteService
+  /** 启动清单（软依赖：拿不到版本就不发账号请求）。 */
+  modules?: ModulesService
 }
 
 /** store 用到的客户端 ctx 子集（effect / inject 是 Cordis 的两件套）。 */
@@ -97,6 +164,8 @@ export interface StoreContext {
   connection: HudConnection
   effect(callback: () => unknown, label?: string): unknown
   inject(names: string[], callback: (scope: InjectedScope) => (() => void) | void): unknown
+  /** 当前界面语言（账号请求要带；老宿主/假 ctx 可能没有）。 */
+  locale?: object | null
 }
 
 /* -------------------------------------------------------- RPC 载荷形状 */
@@ -205,14 +274,97 @@ export type TipHandlers = {
 /** 「悬停提示」片。 */
 export interface TipSlice {
   hideTip(key?: string): void
-  showTip(key: string, text: string, rect: TipAnchor | null): void
-  tipHandlers(key: string, textOf: () => string): TipHandlers
+  showTip(key: string, content: TipContent, rect: TipAnchor | null): void
+  tipHandlers(key: string, contentOf: () => TipContent): TipHandlers
 }
 
 /** 「会话信息」片。 */
 export interface SessionInfoSlice {
   loadPromptHistory(sessionId: string): Promise<HudPromptHistory>
   loadSessionTime(sessionId: string): Promise<HudSessionTime>
+}
+
+/** 「账号余额」片。 */
+export interface AccountSlice {
+  loadBalance(force?: boolean): Promise<HudBalance | null>
+}
+
+/** `provider-balance` 端点里"这个提供方的账本就是平台账号"的那一种答复。 */
+export interface ProviderAccountPayload {
+  available: true
+  account: true
+  token?: ProviderTokenStatePayload | null
+}
+
+/**
+ * 「这个提供方的后台凭据配了没」——宿主只说这两个字段。
+ *
+ * 令牌本身永远不出宿主：要它去取数的只有宿主自己。
+ */
+export interface ProviderTokenStatePayload {
+  ref: string
+  configured: boolean
+}
+
+/** `provider-balance` 端点读到余额时的答复。 */
+export interface ProviderReadyPayload {
+  available: true
+  account?: false
+  token?: ProviderTokenStatePayload | null
+  balance: {
+    provider: string
+    kind: string
+    currency: string | null
+    remaining: string | null
+    usedAccount: string | null
+    usedKey: string | null
+    requests?: number | null
+    placeholderLimit: boolean
+    wallets: AccountWallet[]
+    bonus: AccountWallet[]
+    at: number
+  }
+}
+
+/** `provider-balance` 端点读不到时的答复（`reason` 用来诊断，不直接显示给用户）。 */
+export interface ProviderUnavailablePayload {
+  available: false
+  provider: string | null
+  kind: string | null
+  reason: string
+  message: string | null
+  token?: ProviderTokenStatePayload | null
+}
+
+/** 三种答复的并集。 */
+export type ProviderBalancePayload =
+  ProviderAccountPayload | ProviderReadyPayload | ProviderUnavailablePayload
+
+/** 「后台凭据设置面板」的状态：开没开、给哪个提供方、存到了哪一步。 */
+export interface TokenPanelState {
+  open: boolean
+  /** 面板正在为哪个提供方配令牌。 */
+  provider: string | null
+  /** 那个提供方的凭据引用名（宿主给的，客户端只用来显示"存到哪了"）。 */
+  ref: string | null
+  /** 这个提供方到底能不能配（宿主不支持时面板不弹）。 */
+  supported: boolean
+  saving: boolean
+  /** 上一次保存失败的原因键（`token.error.*`）。 */
+  error: string | null
+  /** 保存成功的时间戳（好让面板自动收起）。 */
+}
+
+/** 「提供方余额」片。 */
+export interface ProviderSlice {
+  /** 换会话时把账本清成 unknown（别让新会话顶着上一个会话的读数）。 */
+  resetForSession(): void
+  loadProviderBalance(force?: boolean): Promise<HudProviderLedger | null>
+  /** 打开后台凭据设置面板（点胶囊时按 token 状态决定要不要调）。 */
+  openTokenPanel(provider: string, ref: string | null): void
+  closeTokenPanel(): void
+  /** 把用户粘贴的令牌交给宿主写进凭据存储。 */
+  saveProviderToken(token: string): Promise<boolean>
 }
 
 /** 「会话归因与审阅」片的注入 helpers。 */

@@ -21,6 +21,8 @@ import {
   writeUi,
 } from '../shared.js'
 import type { StoreContext } from './types.js'
+import { createAccountSlice } from './account.js'
+import { createProviderSlice } from './provider.js'
 import { createAttributionSlice } from './attribution.js'
 import { createCommitsSlice } from './commits.js'
 import { createDiffSlice } from './diff.js'
@@ -117,6 +119,20 @@ export function createStore(ctx: StoreContext): HudStore {
     sessionTime: { sessionId: null, value: null },
     // prompt 历史（输入框 `↑` 召回用）：`{ sessionId, value }`，value 里 prompts 是**新的在前**。
     promptHistory: { sessionId: null, value: null },
+    // 账号余额：**账号级**读数（换会话、换工作区都不该让它消失）。`null` = 还没读到 /
+    // 没登录 / 这个宿主没有账号能力 —— 三种情况界面一样是"不画这枚胶囊"。
+    balance: null,
+    // 当前会话模型来源的账本：首帧还不知道是哪个提供方，先按平台账号那一路画。
+    provider: { mode: 'unknown', balance: null },
+    // 后台凭据设置面板：平时关着，点胶囊（且宿主说"这个站还没配令牌"）时才开。
+    tokenPanel: {
+      open: false,
+      provider: null,
+      ref: null,
+      supported: true,
+      saving: false,
+      error: null,
+    },
     // 胶囊悬停提示：`{ key, text, rect }` 或 null。**自己画**，不用浏览器原生 tooltip ——
     // 原生那个在真机上按了没反应（试过三种节点/容器查证，都不是被谁挡住），
     // 而它延迟、样式、能否出现我们都控制不了；自己画则位置、换行、颜色全说了算。
@@ -168,6 +184,22 @@ export function createStore(ctx: StoreContext): HudStore {
     return state
   }, set)
   var sessionInfoSlice = createSessionInfoSlice(
+    ctx,
+    function () {
+      return state
+    },
+    set,
+  )
+  // 账号余额：软依赖 + 自己的 TTL（它打的是平台网络，不是本地 git）。
+  var accountSlice = createAccountSlice(
+    ctx,
+    function () {
+      return state
+    },
+    set,
+  )
+  // 当前会话模型来源的余额：按会话取、慢节拍（中转站被轮询会限流）。
+  var providerSlice = createProviderSlice(
     ctx,
     function () {
       return state
@@ -441,7 +473,24 @@ export function createStore(ctx: StoreContext): HudStore {
   return {
     getSnapshot: getSnapshot,
     subscribe: subscribe,
-    bindSession: attributionSlice.bindSession,
+    /**
+     * 绑定当前会话（胶囊/turn-images 的 effect 调它）。
+     *
+     * 绑完之后**立刻**去问"这个会话的模型来源是哪个账本"：早先这一步挂在另一个 effect 里，
+     * 而那个 effect 的依赖只有 `sessionId` —— 它先于 `bindSession` 跑，此时 store 里的
+     * `sessionId` 还是 `null`，于是 provider 侧永远是 `unknown`（胶囊一直画平台账号余额），
+     * 要等五分钟那一次轮询才会纠正。会话一换就顺手问，才是对的时机。
+     */
+    bindSession: function (sessionId, cwd) {
+      var previous = state.sessionId
+      attributionSlice.bindSession(sessionId, cwd)
+      if (state.sessionId === previous) return
+      // 换会话 = 换账本。先把旧读数清掉，再**立刻**问一次新会话的模型来源：
+      //   - 不清：新会话会顶着上一个会话的站名和金额，直到新答案回来（那是别人的钱）；
+      //   - 不问：要等 30 秒轮询才纠正（用户报过"切了会话还是旧数"）。
+      providerSlice.resetForSession()
+      if (state.sessionId !== null) providerSlice.loadProviderBalance()
+    },
     refresh: refresh,
     openPanel: openPanel,
     togglePanel: togglePanel,
@@ -458,6 +507,12 @@ export function createStore(ctx: StoreContext): HudStore {
     loadSessionChanges: attributionSlice.loadSessionChanges,
     loadSessionTime: sessionInfoSlice.loadSessionTime,
     loadPromptHistory: sessionInfoSlice.loadPromptHistory,
+    loadBalance: accountSlice.loadBalance,
+    resetForSession: providerSlice.resetForSession,
+    loadProviderBalance: providerSlice.loadProviderBalance,
+    openTokenPanel: providerSlice.openTokenPanel,
+    closeTokenPanel: providerSlice.closeTokenPanel,
+    saveProviderToken: providerSlice.saveProviderToken,
     showTip: tipSlice.showTip,
     hideTip: tipSlice.hideTip,
     tipHandlers: tipSlice.tipHandlers,

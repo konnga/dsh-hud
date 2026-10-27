@@ -33,9 +33,66 @@ export const CSS = [
     'border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,0.25));' +
     'box-shadow:0 6px 20px rgba(0,0,0,0.28);color:var(--dsw-alias-label-primary,#f9fafb);' +
     'font-size:11.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word;pointer-events:none;}',
+  // 气泡逐行结构：标签（「余额」「账号已用」…）用次要色、数字用主色 ——
+  // 一眼扫到数字，而不是让标签和数字抢同样的注意力。
+  '.dshh-tipLine{display:block;}',
+  // 行内分段的普通部分继承整行的颜色，只有带 tone 的段自己变色（见 `.dshh-tipSuccess` 等）。
+  '.dshh-tipSeg{white-space:pre-wrap;}',
+  // 数字用等宽数字：一屏里有好几处读数时，位数变化不会让文字左右抖。
+  '.dshh-tipAccent,.dshh-tipSuccess,.dshh-tipWarn,.dshh-tipValue{font-variant-numeric:tabular-nums;}',
+  '.dshh-tipLabel{color:var(--dsw-alias-label-secondary,#9aa0a6);}',
+  '.dshh-tipValue{color:var(--dsw-alias-label-primary,#f9fafb);margin-left:2px;}',
+  // 数字的分类色。三套都取**框架自己的状态/品牌令牌**（它们深浅主题各有取值，
+  // 且框架本身就把它们当文字色用），不自己写死十六进制 —— 否则换主题就不对了。
+  '.dshh-tipSuccess{color:var(--dsw-alias-state-success-primary,#22c55e);}',
+  '.dshh-tipWarn{color:var(--dsw-alias-state-warn-primary,#f59e0b);}',
+  '.dshh-tipAccent{color:var(--dsw-alias-state-business-primary,#7aaaff);}',
+  '.dshh-tipMuted{color:var(--dsw-alias-label-tertiary,#6b7280);}',
   '.dshh-timerGlyph{flex:none;opacity:.85;}',
   '.dshh-timerValue{font-variant-numeric:tabular-nums;}',
+  // 余额胶囊：数字用等宽数字（余额跳动时宽度不抖）。
+  // 币种符号由 `formatBalance` 的输出自带，样式里**不另画字形**（早先多画一个就成了 `¥ ¥8.60`）。
+  '.dshh-balance{cursor:pointer;gap:2px;font-variant-numeric:tabular-nums;}',
+  '.dshh-balanceValue{letter-spacing:.2px;}',
+  // 赠送余额的 `+`：不是数字，别让它抢走小数点的注意力。
+  '.dshh-balanceBonus{opacity:.75;margin-left:1px;}',
+  // `?` = 这一份是上一次的数（刷新失败）：用警示色标出来，但不刺眼。
+  '.dshh-balanceStale{color:var(--dsw-alias-state-warning-primary,#d7a14a);margin-left:2px;}',
+  // 低余额：`⚠` 与金额一起用警示色（金额本身也变色，扫一眼就知道该充值了）。
+  '.dshh-balanceWarn{flex:none;color:var(--dsw-alias-state-warning-primary,#d7a14a);margin-right:2px;}',
+  '.dshh-balanceLow{color:var(--dsw-alias-state-warning-primary,#d7a14a);}',
+  // 「已用」前缀：比数字弱一档，读的时候不会把它当成余额的一部分。
+  '.dshh-balanceUsed{flex:none;opacity:.65;margin-right:1px;}',
+  // 读不到余额时那枚中性胶囊：整枚压暗，不与有数的胶囊争夺注意力。
+  '.dshh-balanceUnknown{opacity:.7;}',
+  '.dshh-balanceProvider{flex:none;margin-right:3px;opacity:.8;}',
   '.dshh-panel{color:var(--dsw-alias-label-primary,#e5e7eb);font-size:12.5px;line-height:1.6;}',
+  // 后台令牌设置面板：浮在胶囊上方，宽度锁死（凭据是一行长字符串，宽了反而看不过来）。
+  '.dshh-tokenPanel{position:fixed;left:50%;transform:translateX(-50%);bottom:96px;z-index:2147483000;',
+  'width:min(420px,calc(100vw - 32px));box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:12px 14px;',
+  'border-radius:12px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,0.28));',
+  'background:var(--dsw-alias-bg-layer-1,#1c1d21);color:var(--dsw-alias-label-primary,#e5e7eb);',
+  'box-shadow:0 12px 32px rgba(0,0,0,0.32);font-size:12.5px;line-height:1.55;}',
+  '.dshh-tokenHead{display:flex;align-items:baseline;gap:6px;}',
+  '.dshh-tokenTitle{font-size:13px;font-weight:600;}',
+  '.dshh-tokenProvider{font-family:ui-monospace,Consolas,monospace;font-size:11px;padding:1px 6px;border-radius:6px;',
+  'background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,0.14));color:var(--dsw-alias-label-secondary,#8a8f98);}',
+  '.dshh-tokenHint{font-size:11.5px;color:var(--dsw-alias-label-secondary,#8a8f98);}',
+  '.dshh-tokenInput{box-sizing:border-box;width:100%;height:30px;padding:0 9px;border-radius:8px;font:inherit;',
+  'font-family:ui-monospace,Consolas,monospace;font-size:12px;',
+  'border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,0.36));',
+  'background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,0.10));color:var(--dsw-alias-label-primary,#e5e7eb);}',
+  '.dshh-tokenInput:focus{outline:none;border-color:var(--dsw-alias-state-business-primary,#4b8bf5);}',
+  '.dshh-tokenRef{font-size:10.5px;color:var(--dsw-alias-label-tertiary,#6b7280);',
+  'font-family:ui-monospace,Consolas,monospace;}',
+  '.dshh-tokenActions{display:flex;gap:8px;justify-content:flex-end;}',
+  '.dshh-tokenSave,.dshh-tokenCancel{height:26px;padding:0 12px;border-radius:7px;font:inherit;font-size:12px;cursor:pointer;}',
+  '.dshh-tokenSave{border:1px solid transparent;background:var(--dsw-alias-button-primary-fill,#4b8bf5);',
+  'color:var(--dsw-alias-label-primary-foreground,#fff);}',
+  '.dshh-tokenSave:disabled{opacity:.45;cursor:default;}',
+  '.dshh-tokenCancel{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,0.36));background:transparent;',
+  'color:var(--dsw-alias-label-secondary,#8a8f98);}',
+  '.dshh-tokenError{font-size:11.5px;color:var(--dsw-alias-state-error-primary,#f87171);}',
   '.dshh-header{display:flex;align-items:center;gap:8px;padding:6px 8px;flex:none;cursor:move;line-height:1.4;',
   'user-select:none;touch-action:none;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,0.22));}',
   '.dshh-title{font-size:13px;font-weight:600;flex:none;}',

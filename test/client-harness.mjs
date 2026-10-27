@@ -182,10 +182,16 @@ export function mountClient(options = {}) {
   // 词典注册也收下来：契约用例要拿**真正注册进框架的那两份**来核对，而不是再去正则扫源码
   //（源码排版由 prettier 管，扫源码只适合找 `t('…')` 这类调用点，不适合解析字面量）。
   const dictionaries = []
+  // `apply` 里注册的每个 effect 的清理函数（真实 Cordis 在 fiber 卸载时调它）。
+  // 必须收下来：插件里有 `setInterval` 那类长活，不清理的话 node 进程退不出去
+  //（表现是 `node --test` 全部用例通过但永远不返回）。
+  const disposers = []
   const ctx = {
     effect(fn, label) {
       labels.push(label)
-      return fn()
+      const dispose = fn()
+      if (typeof dispose === 'function') disposers.push(dispose)
+      return dispose
     },
     // 按名取客户端服务：宿主没有那个客户端半边时返回 undefined（真实 ctx.get 也如此）。
     get(name) {
@@ -237,7 +243,23 @@ export function mountClient(options = {}) {
   const components = Object.fromEntries(
     registrations.map((entry) => [entry.options.id, entry.component]),
   )
-  return { ...bundle, exported, registrations, components, labels, dictionaries }
+  // `dispose()` 卸载这个"已挂载的客户端"：把 apply 里装下的清理函数都跑一遍。
+  // 用不用都行，但**用到了会起定时器的服务**（`sessions` 等）的用例必须调，
+  // 否则那个 interval 会一直挂着。
+  let disposed = false
+  function dispose() {
+    if (disposed) return
+    disposed = true
+    while (disposers.length > 0) {
+      const fn = disposers.pop()
+      try {
+        fn()
+      } catch {
+        // 清理失败不该把用例本身判红：这里只求"进程能退出"。
+      }
+    }
+  }
+  return { ...bundle, exported, registrations, components, labels, dictionaries, dispose }
 }
 
 /**
@@ -356,6 +378,15 @@ export function cssRule(selector, css = stylesheetText()) {
 /** 按 data-dsh-hud 属性找出节点（同样展开函数组件）。 */
 export function findByAttr(node, value, depth = 0) {
   if (depth > 20 || node === null || typeof node !== 'object') return null
+  // 数组也可能作为"单个子节点"传进来（`h('div', props, children)` 就是这么传的）。
+  // 上面 `findAll` 早就认这种形状了，这里漏了会让"节点明明在树里却找不到"。
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findByAttr(child, value, depth + 1)
+      if (found) return found
+    }
+    return null
+  }
   if (typeof node.type === 'function')
     return findByAttr(node.type({ ...node.props, children: node.children }), value, depth + 1)
   if (node.props && node.props['data-dsh-hud'] === value) return node
@@ -366,12 +397,42 @@ export function findByAttr(node, value, depth = 0) {
   return null
 }
 
+/**
+ * 与 `src/client/shared.ts` 的 `normalizeTipContent` 同一套规则（harness 跑的是打包后的
+ * `lib/client.js`，import 不到 TS 源码，只能在这里照抄一份）。
+ *
+ * 之所以要它：组件现在把气泡内容作为「逐行结构」交给 `tipHandlers`，而绝大多数用例
+ * 只关心拼平后的文本 —— 在假 `showTip` 里归一化，老用例一行都不用改。
+ */
+function normalizeTipContent(content) {
+  const lines =
+    typeof content === 'string'
+      ? [{ text: content }]
+      : Array.isArray(content)
+        ? content.filter((line) => line !== null && typeof line === 'object')
+        : []
+  const text = lines
+    .map((line) => {
+      // 与 `tipLineText` 逐条对齐：行内分段 > 整行 text > label + value。
+      if (Array.isArray(line.segments)) return line.segments.map((seg) => seg.text).join('')
+      if (typeof line.text === 'string') return line.text
+      const label = line.label ?? ''
+      const value = line.value ?? ''
+      // 标签和数值之间补一个空格（屏幕上是 CSS 间距）。
+      return label !== '' && value !== '' ? label + ' ' + value : label + value
+    })
+    .join('\n')
+  return { lines, text }
+}
+
 /** 假 store：组件只通过 getSnapshot/subscribe 读它。 */
 export function fakeStore(state) {
   // 真实快照总是带 diff / commit 两个字段（都是 null 起）：这里就地补上，
   // 组件用例不必每个都写一遍，同时保持快照对象本身的引用（有测试靠它观察变更）。
   if (!('diff' in state)) state.diff = null
   if (!('commit' in state)) state.commit = null
+  // 令牌面板的默认快照：关着。开着的用例自己传 `tokenPanel`。
+  if (!('tokenPanel' in state)) state.tokenPanel = closedTokenPanel()
   return {
     getSnapshot: () => state,
     subscribe: () => () => {},
@@ -396,6 +457,28 @@ export function fakeStore(state) {
     // 审阅进度（`v` 键会调它：假 store 缺这个方法就会把按键路径打崩）。
     toggleReviewed: () => {},
     clearReviewed: () => {},
+    // 账号余额：胶囊点击会带 `force` 调它；默认 no-op，要观察的用例用 `options.methods` 覆盖。
+    balanceCalls: [],
+    loadBalance: function (force) {
+      this.balanceCalls.push({ force: force === true })
+    },
+    // 当前模型来源那一路：胶囊在 provider 模式下点击会带 `force` 调它。
+    providerCalls: [],
+    loadProviderBalance: function (force) {
+      this.providerCalls.push({ force: force === true })
+    },
+    // 后台令牌设置面板：打开 / 收起 / 保存都只记调用，断言由用例看着自己那份数组做。
+    tokenPanelCalls: [],
+    openTokenPanel: function (provider, ref) {
+      this.tokenPanelCalls.push({ action: 'open', provider: provider, ref: ref })
+    },
+    closeTokenPanel: function () {
+      this.tokenPanelCalls.push({ action: 'close' })
+    },
+    saveProviderToken: function (token) {
+      this.tokenPanelCalls.push({ action: 'save', token: token })
+      return Promise.resolve(true)
+    },
     // 悬停气泡：真 store 把文案放进快照、由 overlay 那枚座位画；这里只把调用记下来供断言。
     tipCalls: [],
     showTip: function (key, text, rect) {
@@ -404,7 +487,7 @@ export function fakeStore(state) {
     hideTip: function (key) {
       this.tipCalls.push({ key, text: null })
     },
-    tipHandlers: function (key, textOf) {
+    tipHandlers: function (key, contentOf) {
       const self = this
       return {
         onPointerEnter: (event) => {
@@ -413,7 +496,11 @@ export function fakeStore(state) {
             target && typeof target.getBoundingClientRect === 'function'
               ? target.getBoundingClientRect()
               : null
-          self.showTip(key, textOf(), rect)
+          // 内容可能是「逐行结构」（新）或一整段文本（老）。这里归一化，
+          // 让只关心文本的用例继续拿 `text`，关心配色的用例另取 `lines`。
+          const content = contentOf()
+          const normalized = normalizeTipContent(content)
+          self.showTip(key, normalized.text, rect, normalized.lines)
         },
         onPointerLeave: () => self.hideTip(key),
         onPointerDown: () => self.hideTip(key),
@@ -487,6 +574,23 @@ export function statusFixture(overrides = {}) {
  * @param state - 覆盖快照字段。
  * @param options - `methods` 覆盖 store 方法，其余作为组件 props。
  */
+/** 令牌面板"关着"时的快照（真实 store 的初值也是这个形状）。 */
+export function closedTokenPanel() {
+  return {
+    open: false,
+    provider: null,
+    ref: null,
+    supported: true,
+    saving: false,
+    error: null,
+  }
+}
+
+/** 渲染一次后台令牌设置面板。`state` 覆盖快照，`options.methods` 覆盖 store 方法。 */
+export function renderTokenPanel(state = {}, options = {}) {
+  return renderSeat('dsh-hud-token-panel', {}, state, options)
+}
+
 export function renderSeat(id, defaults, state = {}, options = {}) {
   const { components } = mountClient()
   const { methods = {}, ...props } = options
@@ -516,6 +620,28 @@ export function renderPill(state = {}, options = {}) {
       ...options,
     },
   )
+}
+
+/**
+ * 渲染一枚余额胶囊（dock 那行里的最后一条）。
+ *
+ * @param balance - 余额快照（`state.balance`）；传 `null` 就是"没有可展示的余额"。
+ * @param options - 交给 `renderPill` 的选项（`methods` 可覆盖 store 方法）。
+ * @returns 座位节点。
+ */
+export function renderBalancePill(balance, options = {}) {
+  return renderPill({ balance: balance }, options)
+}
+
+/**
+ * 按"当前会话的模型来源"渲染余额胶囊（`provider` 那一路）。
+ *
+ * @param provider - `state.provider` 那份账本结论。
+ * @param options - 渲染选项；`balance` 是同一份快照里的**账号**余额（对照用）。
+ */
+export function renderProviderPill(provider, options = {}) {
+  const { balance = null, ...rest } = options
+  return renderPill({ balance: balance, provider: provider }, rest)
 }
 
 export function renderPanel(state = {}, options = {}) {

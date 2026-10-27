@@ -321,10 +321,162 @@ export interface UiPrefs {
   commitWidth?: number
 }
 
+/**
+ * 悬停气泡里的一行。
+ *
+ * 三种写法：
+ *   - `{ text, tone }`   —— 一整行一种颜色（如「更新于 …」用次要色）；
+ *   - `{ label, value }` —— 左边标签次要色、右边数字主色（余额那几行）；
+ *   - `{ text }`         —— 默认主色。
+ *
+ * 之所以要结构而不是一段纯文本：用户要求「数字亮、标签灰」，
+ * 而一整段字符串在 DOM 里只有一个文本节点，一种颜色，做不到。
+ */
+export interface TipSegment {
+  text: string
+  /** 只给"读数"上色；不给就是普通文字色。 */
+  tone?: TipLine['tone']
+}
+
+export interface TipLine {
+  text?: string
+  label?: string
+  value?: string
+  /**
+   * 行内分段（比 `label + value` 更细）：一句白话里只把数字挑出来高亮。
+   *
+   * 为什么需要它：会话计时、工具统计这些气泡是**一整句话**
+   *（「…其中模型 3h 24m、工具 50m · 62 轮 / 1469 步」），
+   * 排版不能动，但其中的数字要突出。用分段就能只染色、不改句式和换行。
+   */
+  segments?: TipSegment[]
+  /**
+   * 这一行里"被强调的部分"用什么颜色。
+   *
+   * - `primary`（默认）：主文字色，深浅主题自动反色；
+   * - `muted`：次要信息（抬头、更新时间、变化量）；
+   * - `success`：**还剩多少**（余额）—— 绿色是"可用额度"的通行读法；
+   * - `warn`：**已经花掉多少**（两个已用）—— 琥珀只是"这是消耗"的分类色，
+   *   不是在报警；
+   * - `accent`：中性数字（API 请求次数）—— 用产品自己的品牌蓝，深浅主题各有一套取值。
+   *
+   * 为什么不全用同一种彩色：四个数里三个是钱、一个是次数，颜色分开才一眼分得清
+   * 哪行是"还剩"、哪行是"花掉"、哪行根本不是金额。
+   */
+  tone?: 'primary' | 'muted' | 'success' | 'warn' | 'accent'
+}
+
+/** 气泡内容：单段文本（老写法）或逐行结构。 */
+export type TipContent = string | TipLine[]
+
+/**
+ * 一行在"拼平"（日志/断言/兼容 `state.text`）时长的样子。
+ *
+ * 标签与数值之间补一个空格：屏幕上它们之间是 CSS 的 `margin-left`，拼平之后没这个
+ * 间距，`余额$742.23` 读起来是错的，日志里也不好 grep。
+ */
+export function tipLineText(line: TipLine): string {
+  if (Array.isArray(line.segments)) {
+    return line.segments
+      .map(function (segment) {
+        return segment.text
+      })
+      .join('')
+  }
+  if (typeof line.text === 'string') return line.text
+  var label = line.label ?? ''
+  var value = line.value ?? ''
+  if (label !== '' && value !== '') return label + ' ' + value
+  return label + value
+}
+
+/**
+ * 把一句白话按给定的"读数"切成段：命中的部分高亮，其余保持普通文字。
+ *
+ * 做法是**字面量匹配**而不是猜数字：调用方知道这句话里哪些是读数
+ *（`3h 24m`、`1469`、`$742.23`），交给我们按出现顺序切段。
+ * 不去用 `\d+` 自动扫 —— 那样会把「2026-10-20 12:41」这类时间戳也染上，
+ * 满屏都是颜色，等于没有重点。
+ *
+ * @param text - 整句白话。
+ * @param readings - 要突出的字面量（按长度从长到短匹配，避免短串先吃长串）。
+ * @param tone - 用什么颜色。
+ * @returns 分段数组（没有命中就退化成一段）。
+ */
+export function emphasize(
+  text: string,
+  readings: (string | null | undefined)[],
+  tone: TipLine['tone'] = 'accent',
+): TipSegment[] {
+  var hits = readings
+    .filter(function (item) {
+      return typeof item === 'string' && item !== ''
+    })
+    .map(function (item) {
+      return item as string
+    })
+    .sort(function (left, right) {
+      return right.length - left.length
+    })
+  if (hits.length === 0 || text === '') return [{ text: text }]
+  var segments: TipSegment[] = []
+  var plain = ''
+  var index = 0
+  while (index < text.length) {
+    var matched: string | null = null
+    for (var at = 0; at < hits.length; at += 1) {
+      if (text.startsWith(hits[at], index)) {
+        matched = hits[at]
+        break
+      }
+    }
+    if (matched === null) {
+      plain += text[index]
+      index += 1
+      continue
+    }
+    if (plain !== '') {
+      segments.push({ text: plain })
+      plain = ''
+    }
+    segments.push({ text: matched, tone: tone })
+    index += matched.length
+  }
+  if (plain !== '') segments.push({ text: plain })
+  return segments.length === 0 ? [{ text: text }] : segments
+}
+
+/**
+ * 把气泡内容归一成「逐行结构 + 拼平文本」。
+ *
+ * 两处都用它：真 store 的 tip 片（渲染用 `lines`，`text` 留给日志与断言），
+ * 以及测试 harness 的假 `showTip`（让老用例继续按字符串断言，不必全部重写）。
+ */
+export function normalizeTipContent(content: TipContent): { lines: TipLine[]; text: string } {
+  var lines: TipLine[] =
+    typeof content === 'string'
+      ? [{ text: content }]
+      : Array.isArray(content)
+        ? content.filter(function (line) {
+            return line !== null && typeof line === 'object'
+          })
+        : []
+  return {
+    lines: lines,
+    text: lines
+      .map(function (line) {
+        return tipLineText(line)
+      })
+      .join('\n'),
+  }
+}
+
 /** 悬停气泡快照（`state.tip`）。 */
 export interface TipState {
   key: string
   text: string
+  /** 逐行结构（渲染用）；`text` 是它的拼平版本。 */
+  lines: TipLine[]
   rect: { left: number; top: number; right: number }
 }
 
@@ -458,6 +610,41 @@ export interface PromptHistoryState {
   value: HudPromptHistory | null
 }
 
+/** 一个钱包的余额（充值钱包与赠送钱包同形）。`balance` 是平台给的十进制字符串，保精度不转数字。 */
+export interface HudBalanceWallet {
+  currency: string
+  balance: string
+}
+
+/**
+ * 账号余额快照（`state.balance`）。
+ *
+ * 这是**账号级**读数，与会话无关：换会话、换工作区都不该让它消失。
+ * 值来自 DSH 自己的 `remote.account.getBalance`，本插件只读、不落盘
+ * （余额是会变的账目数字，留一个过期值比没有更糟）。
+ */
+export interface HudBalance {
+  /** 充值钱包；一个可展示的钱包都没有时整份快照为 `null`，胶囊不画。 */
+  wallets: HudBalanceWallet[]
+  /** 赠送钱包（已过滤掉 0 余额的）。 */
+  bonus: HudBalanceWallet[]
+  /** 这份数字是什么时候取到的（本地时刻）。 */
+  at: number
+  /** 最近一次读取失败：`at` 仍停在上一次成功的时刻，界面据此标"可能过期"。 */
+  failed: boolean
+  /** 平台用量页（累计消耗 / 本月消耗这些账目只在那里；右键胶囊会打开它）。 */
+  usageUrl?: string | null
+  /** 平台充值页。 */
+  topUpUrl?: string | null
+  /**
+   * 上一次成功读到的钱包与时刻，用来算"较上次刷新变化了多少"。
+   *
+   * 只在内存里：跨重启比较没有意义（中间发生过什么不知道），所以不落盘。
+   * 失败的那一轮不动它 —— 它永远指向**最近一次成功**的读数。
+   */
+  prev?: { wallets: HudBalanceWallet[]; at: number } | null
+}
+
 /** 侧栏每条会话行要的摘要（`session-statuses` 里的一行）。 */
 export interface HudSessionOverviewRow {
   sessionId: string
@@ -539,6 +726,12 @@ export interface HudState {
   tools: ToolsState
   sessionTime: SessionTimeState
   promptHistory: PromptHistoryState
+  /** 账号余额（账号级；还没读到、或这个账号没有可展示的钱包时是 `null`）。 */
+  balance: HudBalance | null
+  /** 当前会话模型来源的账本（见 `HudProviderLedger`）。 */
+  provider: HudProviderLedger
+  /** 后台凭据设置面板（点胶囊时按需打开）。 */
+  tokenPanel: TokenPanelState
   tip: TipState | null
   rows: RowsState
   reviewed: ReviewedMap
@@ -571,13 +764,22 @@ export interface HudStore {
   loadSessionChanges(): Promise<unknown>
   loadSessionTime(sessionId: string): Promise<unknown>
   loadPromptHistory(sessionId: string): Promise<unknown>
+  /** 取账号余额（`force` 跳过 TTL；胶囊点击就用它）。拿不到账号能力时安静地回 `null`。 */
+  loadBalance(force?: boolean): Promise<HudBalance | null>
+  /** 取"当前会话模型来源"的余额（中转站/官方 Key 那一侧；`force` 跳过 TTL）。 */
+  /** 换会话时把账本清成 unknown（别让新会话顶着上一个会话的读数）。 */
+  resetForSession(): void
+  loadProviderBalance(force?: boolean): Promise<HudProviderLedger | null>
+  openTokenPanel(provider: string, ref: string | null): void
+  closeTokenPanel(): void
+  saveProviderToken(token: string): Promise<boolean>
   showTip(
     key: string,
     text: string,
     rect: { left: number; top: number; right: number } | null,
   ): void
   hideTip(key?: string): void
-  tipHandlers(key: string, textOf: () => string): Record<string, unknown>
+  tipHandlers(key: string, contentOf: () => TipContent): Record<string, unknown>
   closeDiff(): void
   closeDetail(): void
   setDiffSide(side: string): void
@@ -640,6 +842,126 @@ export var ROWS_POLL_MS = 30000
 export var TOOLS_POLL_MS = 3000
 /** 胶囊上最多铺几个技能名（其余收成 `+k`，完整清单在悬停里）。 */
 export var SKILLS_SHOWN = 2
+/**
+ * 账号余额的轮询节拍：**比别的读数都慢**。
+ *
+ * 这一枚走的不是本地 git，而是宿主替我们去平台查账（一次真实网络请求），
+ * 而且余额是按分钟变的，密了纯属浪费。页面隐藏时照例跳过，点击胶囊可强制刷新。
+ */
+export var BALANCE_POLL_MS = 300000
+/** 同一次请求的 TTL：轮询与点击之间不重复打平台（失败时用更短的间隔重试，见切片）。 */
+export var BALANCE_TTL_MS = 240000
+/** 失败后的重问间隔：账目查不到多半是网络/登录态，隔一小会儿再试就够。 */
+export var BALANCE_RETRY_MS = 30000
+/* ------------------------------------------------- 提供方余额（按模型来源） */
+
+/**
+ * 当前会话**当前模型所属提供方**的余额。
+ *
+ * 与 `HudBalance` 的区别不只是字段：`HudBalance` 是 DeepSeek 平台账号那一个账本，
+ * 这个是"这次会话真正在用的那个提供方"的账本 —— 可能是官方 API Key，也可能是用户自己
+ * 填的第三方中转站。两个账本的钱不能混着显示（那正是"胶囊数字看着像 bug"的来源）。
+ */
+export interface HudProviderBalance {
+  /** 提供方 id（`ur` / `muyuan` / `deepseek-official` …）。 */
+  provider: string
+  kind: 'official' | 'relay'
+  /** 站点自己的记账币种；不做汇率换算。 */
+  currency: string | null
+  /** 剩余额度；站点把额度写成"无限"占位值时是 `null`（算不出来，别编）。 */
+  remaining: string | null
+  /**
+   * **整个账号**的累计已用（站点 `/api/user/self` 的 `used_quota`）。
+   *
+   * 与 `usedKey` 并存而不是二选一：站点上两个数能同时拿到、也能差出一截
+   * （实测 ur：账号 $526.66 / 本 Key $479.44）。
+   */
+  usedAccount: string | null
+  /** **这枚 API Key** 的累计已用（站点 `/dashboard/billing/usage` 的 `total_usage`）。 */
+  usedKey: string | null
+  /** 账号累计请求数（只有账号那一路给得出）。 */
+  requests?: number | null
+  /** 站点把额度写成占位值 → 剩余不可信，只能展示已用。 */
+  placeholderLimit: boolean
+  wallets: HudBalanceWallet[]
+  bonus: HudBalanceWallet[]
+  /** 取数时刻（本地毫秒）。 */
+  at: number
+}
+
+/**
+ * 这一枚胶囊该看哪个账本。
+ *
+ * - `account`：会话用的就是 DeepSeek 平台账号 → 走原来的 `HudBalance` 那一路；
+ * - `provider`：会话用的是别的提供方，且读到了它的余额；
+ * - `unavailable`：知道是哪个提供方，但读不到（不画胶囊，与"读不到就不画"同一条规矩）；
+ * - `unknown`：会话/投影还没就绪（首帧常态），先按账号那一路画，别让胶囊闪没。
+ */
+/** 「后台凭据设置面板」的状态：开没开、给哪个提供方、存到了哪一步。 */
+export interface TokenPanelState {
+  open: boolean
+  /** 面板正在为哪个提供方配令牌。 */
+  provider: string | null
+  /** 那个提供方的凭据引用名（宿主给的；面板只拿它显示"存到哪了"）。 */
+  ref: string | null
+  /** 这个提供方到底能不能配（宿主不认识它时面板不弹）。 */
+  supported: boolean
+  saving: boolean
+  /** 上一次保存失败的原因键（`balance.tokenError.*`）。 */
+  error: string | null
+  /** 保存成功的时刻（好让面板自己收起）。 */
+}
+
+/**
+ * 「这个提供方的后台凭据配了没」。
+ *
+ * 只用来决定点胶囊干什么：没配 → 弹设置面板；配了 → 刷新一次读数。
+ * 令牌本身永远不出宿主，这里也就没有它的位置。
+ */
+export interface HudProviderToken {
+  ref: string
+  configured: boolean
+}
+
+export interface HudProviderLedger {
+  mode: 'account' | 'provider' | 'unavailable' | 'unknown'
+  balance: HudProviderBalance | null
+  /**
+   * 知道是哪个提供方（但可能读不到它的余额）时的 id。
+   *
+   * 为什么要留着：`unavailable` 时胶囊要画 `ur —`，而不是干脆消失 ——
+   * 消失会让人分不清"这个站没有余额接口"和"插件坏了"（这正是用户报过的那一幕）。
+   */
+  provider?: string | null
+  /** 读不到的原因（`unsupported` / `no-key` / `network` …）；只用于悬停里那句话。 */
+  reason?: string | null
+  /** 这个提供方的后台凭据状态（决定点胶囊是"弹面板"还是"刷新"）。 */
+  token?: HudProviderToken | null
+}
+
+/**
+ * 低余额提醒的阈值（默认 10）。
+ *
+ * 为什么是常量而不是设置项：DSH 的客户端插件条目拿不到 Cordis config
+ * （`client-modules` 建条目时只传 `{ name: id }`），这里也就没有可读的配置面；
+ * 而为了一个数字去加一整页设置并不划算。需要改的人用 `BALANCE_LOW_KEY` 那个
+ * localStorage 键覆盖（README 里写了）。
+ */
+export var BALANCE_LOW_DEFAULT = 10
+/** 「当前会话模型来源」余额的轮询节拍：真实请求由 store 的 TTL 兜着，这里只决定问的频率。 */
+export var PROVIDER_POLL_MS = 30000
+/**
+ * 「还没问出来」时的重问间隔。
+ *
+ * 重启/刚开会话的那一下，宿主往往还没读到模型选择投影 —— 第一次问会落空。
+ * 用 30 秒节拍兜的话胶囊要空半分钟（用户报的就是这个）；1 秒问一次，
+ * 正常情况一两秒内就补上了。真的出错时也不会打风暴：store 的失败退避是
+ * 1s→2s→4s→…→30s，这里的轮询只是"看一眼"，多半被 TTL 直接挡回。
+ */
+export var PROVIDER_RETRY_TICK_MS = 1000
+
+/** 覆盖低余额阈值的 localStorage 键（值是十进制数，比如 `50`）。 */
+export var BALANCE_LOW_KEY = 'dsh-hud.balanceLow'
 /** 面板默认宽度与“停靠在输入框上方”的锚点高度。 */
 export var PANEL_WIDTH = 380
 export var COMPOSER_OFFSET = 168

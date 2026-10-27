@@ -106,6 +106,141 @@ test('端到端的失败码是浏览器半能翻译的那些', { skip: !HAS_GIT 
   assert.equal(unknown.error.details.code, 'unknown-endpoint')
 })
 
+test('provider-balance 端点：读取器没装时报 unsupported（而不是 500 或抛）', async () => {
+  const { setProviderBalanceReader } = await import('../lib/host/rpc.js')
+  const { handler } = mount()
+  // `apply` 会装一个真的读取器；这里显式卸掉，模拟"插件被卸载/更旧版本"的状态。
+  setProviderBalanceReader(null)
+  try {
+    const result = await rpcCall(handler, CHANNEL, 'provider-balance', {
+      args: { sessionId: 'session-1' },
+    })
+    assert.equal(result.ok, true, `信封层面要成功，实际 ${JSON.stringify(result)}`)
+    assert.equal(result.value.available, false)
+    assert.equal(result.value.reason, 'unsupported')
+  } finally {
+    // 别把"没装"这个状态漏给后面的用例：重新 mount 一次，让 `apply` 自己把它装回去。
+    mount()
+  }
+})
+
+test('provider-balance 端点：按会话把三种结论原样转给浏览器半', async () => {
+  // 端点只做"参数收窄 + 结论翻译"：协议在 providers.js、编排在 provider-balance.js，
+  // 这里装一个假的"已解析结论"来验那条转发路径。
+  const { handler } = mount()
+  const { setProviderBalanceReader } = await import('../lib/host/rpc.js')
+  const seen = []
+  const cases = [
+    {
+      outcome: {
+        ok: true,
+        value: {
+          provider: 'muyuan',
+          kind: 'relay',
+          remaining: '1',
+          usedAccount: null,
+          usedKey: null,
+        },
+      },
+      expect: (value) => {
+        assert.equal(value.available, true)
+        assert.equal(value.balance.provider, 'muyuan')
+      },
+    },
+    {
+      // 这个提供方的账本就是平台账号：让浏览器半自己去取，宿主不重复取。
+      outcome: { ok: true, value: null, account: true },
+      expect: (value) => {
+        assert.equal(value.available, true)
+        assert.equal(value.account, true)
+      },
+    },
+    {
+      outcome: {
+        ok: false,
+        failure: { provider: 'api404', kind: 'relay', reason: 'unsupported', message: null },
+      },
+      expect: (value) => {
+        assert.equal(value.available, false)
+        assert.equal(value.provider, 'api404')
+        assert.equal(value.reason, 'unsupported')
+      },
+    },
+  ]
+  setProviderBalanceReader((sessionId) => {
+    seen.push(sessionId)
+    // 第 4 次（没有会话 id 那一次）不在 cases 里：回最后一条就够，只为看参数形状。
+    const index = Math.min(seen.length - 1, cases.length - 1)
+    return Promise.resolve(cases[index].outcome)
+  })
+  try {
+    for (const item of cases) {
+      const result = await rpcCall(handler, CHANNEL, 'provider-balance', {
+        args: { sessionId: 'session-a' },
+      })
+      assert.equal(result.ok, true)
+      item.expect(result.value)
+    }
+    assert.deepEqual(seen, ['session-a', 'session-a', 'session-a'])
+    // 没有会话 id 时传 null（不是空串，也不是丢参数）。
+    const blank = await rpcCall(handler, CHANNEL, 'provider-balance', { args: {} })
+    assert.equal(blank.ok, true)
+    assert.deepEqual(seen.slice(-1), [null])
+  } finally {
+    setProviderBalanceReader(null)
+  }
+})
+
+test('provider-credential 端点：写入器没装时报 unsupported（不是静默成功）', async () => {
+  const { setProviderTokenWriter } = await import('../lib/host/rpc.js')
+  // 先 mount 再卸：`apply` 自己会把真实写入器装进去，顺序反了就等于没卸掉。
+  const { handler } = mount()
+  setProviderTokenWriter(null)
+  try {
+    const result = await rpcCall(handler, CHANNEL, 'provider-credential', {
+      args: { provider: 'ur', token: 'x' },
+    })
+    assert.equal(result.ok, true)
+    assert.equal(result.value.saved, false)
+    assert.equal(result.value.reason, 'unsupported')
+  } finally {
+    mount()
+  }
+})
+
+test('provider-credential 端点：令牌只经宿主写一次，答复里绝不回显', async () => {
+  const { setProviderTokenWriter } = await import('../lib/host/rpc.js')
+  // 同样是"先 mount 再替换"：反过来会被 `apply` 装的那个真写入器盖掉。
+  const { handler } = mount()
+  const seen = []
+  setProviderTokenWriter((provider, token) => {
+    seen.push({ provider, token })
+    return Promise.resolve({ ok: true, ref: 'UR_ACCESS_TOKEN' })
+  })
+  try {
+    const result = await rpcCall(handler, CHANNEL, 'provider-credential', {
+      args: { provider: 'ur', token: 'sk-dashboard-token' },
+    })
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.value, { saved: true, ref: 'UR_ACCESS_TOKEN' })
+    // 载荷里除了 `ref` 什么都没有 —— 令牌绝不能出现在答复里。
+    assert.equal(JSON.stringify(result.value).includes('sk-dashboard-token'), false)
+    assert.deepEqual(seen, [{ provider: 'ur', token: 'sk-dashboard-token' }])
+  } finally {
+    setProviderTokenWriter(null)
+  }
+})
+
+test('provider-credential 端点：没有提供方 id 就直接拒（不去猜是哪个站）', async () => {
+  const { handler } = mount()
+  const result = await rpcCall(handler, CHANNEL, 'provider-credential', {
+    args: { token: 'sk-x' },
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.value.saved, false)
+  assert.equal(result.value.reason, 'unknown-provider')
+})
+
 test('两个半边写死的通道前缀完全一致', () => {
   // 客户端 bundle 是独立文件，通道前缀若与宿主半漂移，所有请求都会 404/405。
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')

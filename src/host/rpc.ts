@@ -16,6 +16,7 @@ import {
   readSessionTime,
   readSessionTools,
 } from './session.js'
+import type { ProviderBalanceOutcome, ProviderTokenWriteResult } from './provider-balance.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { HudContext, HudRpcEnvelope } from './types.js'
 /**
@@ -35,6 +36,38 @@ const toArgs = (args: unknown): ArgsRecord =>
 /** 一个端点处理器：只认 args，返回什么由端点自己决定。 */
 type EndpointHandler = (args: unknown) => Promise<unknown>
 
+/**
+ * 「按会话模型来源查余额」的读取器。
+ *
+ * 端点表是静态对象（没有 ctx），所以由插件 `apply` 在启动时装进来 ——
+ * 与 `services.ts` 里那几个软依赖读数器同一个套路。没装就是"这个宿主不支持"。
+ */
+let providerBalanceReader:
+  ((sessionId: string | null, force?: boolean) => Promise<ProviderBalanceOutcome>) | null = null
+
+/**
+ * 「把后台凭据写进凭据存储」的写入器。
+ *
+ * 与读取器同一个套路：端点表拿不到 ctx，由 `apply` 装进来。
+ * 这是本插件**唯一**会改状态的动作，所以收得很窄 —— 只写 `*_ACCESS_TOKEN` 那一个引用。
+ */
+let providerTokenWriter:
+  ((provider: string, token: unknown) => Promise<ProviderTokenWriteResult>) | null = null
+
+/** 装/卸读取器（`apply` 与它的清理函数各调一次）。 */
+export function setProviderBalanceReader(
+  reader: ((sessionId: string | null, force?: boolean) => Promise<ProviderBalanceOutcome>) | null,
+): void {
+  providerBalanceReader = reader
+}
+
+/** 装/卸写入器（同上）。 */
+export function setProviderTokenWriter(
+  writer: ((provider: string, token: unknown) => Promise<ProviderTokenWriteResult>) | null,
+): void {
+  providerTokenWriter = writer
+}
+
 /** 端点表：全部只读；新增端点时在这里登记。 */
 export const ENDPOINTS: Record<string, EndpointHandler> = {
   async status(args) {
@@ -50,6 +83,61 @@ export const ENDPOINTS: Record<string, EndpointHandler> = {
       )
     }
     return status
+  },
+
+  /**
+   * 这个会话**现在用的提供方**的余额。
+   *
+   * 与 `balance`（账号那一路）分开的理由：这一条要读**用户自己的**中转站，凭据与地址都来自
+   * 「设置 → 模型」，请求只发给他自己填的 baseURL。放在同一条通道上只是复用围栏，语义不同。
+   */
+  async 'provider-balance'(args) {
+    const input = toArgs(args)
+    const sessionId =
+      typeof input.sessionId === 'string' && input.sessionId !== '' ? input.sessionId : null
+    if (providerBalanceReader === null) {
+      return {
+        available: false,
+        provider: null,
+        kind: null,
+        reason: 'unsupported',
+        message: 'provider balance reader is not installed',
+        token: null,
+      }
+    }
+    const outcome = await providerBalanceReader(sessionId, input.force === true)
+    // `token` 顶层透传：客户端据此决定点胶囊是"弹设置面板"还是"刷新一下"。
+    // 只给引用名与是否已配 —— 令牌本身永远不出宿主。
+    const token = outcome.token ?? null
+    if (outcome.ok === true) {
+      // `account: true` = 这个提供方的账本就是 DSH 账号那一路，客户端自己去取。
+      if (outcome.value === null) return { available: true, account: true, token }
+      return { available: true, balance: outcome.value, token }
+    }
+    return {
+      available: false,
+      provider: outcome.failure.provider,
+      kind: outcome.failure.kind,
+      reason: outcome.failure.reason,
+      message: outcome.failure.message,
+      token,
+    }
+  },
+
+  /**
+   * 写入某个提供方的后台凭据（胶囊上的设置面板调这个）。
+   *
+   * 只接受"这个提供方自己的 `*_ACCESS_TOKEN`"——引用名由宿主从设置投影推导，
+   * 客户端连引用名都不用传。令牌不回显，也不进任何日志。
+   */
+  async 'provider-credential'(args) {
+    const input = toArgs(args)
+    const provider = typeof input.provider === 'string' ? input.provider.trim() : ''
+    if (provider === '') return { saved: false, reason: 'unknown-provider' }
+    if (providerTokenWriter === null) return { saved: false, reason: 'unsupported' }
+    const result = await providerTokenWriter(provider, input.token)
+    if (result.ok === true) return { saved: true, ref: result.ref }
+    return { saved: false, reason: result.reason, message: result.message ?? null }
   },
 
   async 'session-tools'(args) {

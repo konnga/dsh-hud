@@ -10,16 +10,18 @@
  *
  * - `sessions`（宿主服务）：枚举活着的会话，给 `session-time` / `prompt-history` /
  *   `session-statuses` 三个端点用。缺了就回"不可用"，侧栏那枚 chip 不画，其余照旧。
- * - `sessionProjections` 的三个键（都是投影，**从完整持久日志折叠**，分页与压实都不影响）：
+ * - `sessionProjections` 的四个键（都是投影，**从完整持久日志折叠**，分页与压实都不影响）：
  *   - `turnBoundary` → 当前回合号（归因、面板、胶囊用它说"第几轮"）；
  *   - `sessionStats` → 会话计时胶囊要的模型/工具墙钟与轮次步数；
- *   - `turnOutline` → 每条 turn 的原始 `prompt`，即输入框 `↑` 召回的数据源。
+ *   - `turnOutline` → 每条 turn 的原始 `prompt`，即输入框 `↑` 召回的数据源；
+ *   - `modelSelection` → 这个会话**现在用的提供方与模型**，是"按模型来源查余额"的入口。
  *
  * 四者全是**软依赖**：任何一个没到齐，对应功能安静降级，绝不把整块拖下水。
  */
 
 import type {
   HudContext,
+  HudModelSelection,
   HudSession,
   HudSessionStats,
   HudSessionsService,
@@ -31,6 +33,7 @@ let hostContext: HudContext | null = null
 let sessionTurnReader: ((session: unknown) => number | null) | null = null
 let sessionStatsReader: ((session: unknown) => HudSessionStats | null) | null = null
 let sessionOutlineReader: ((session: unknown) => HudTurnOutline | null) | null = null
+let modelSelectionReader: ((session: unknown) => HudModelSelection | null) | null = null
 
 /** 记下宿主 ctx：注入回调没到齐、或状态被别的实例卸载清掉时，用它按契约兜底问一次。 */
 export function rememberContext(ctx: HudContext): void {
@@ -71,7 +74,57 @@ export function sessionOutline(session: unknown): HudTurnOutline | null {
 }
 
 /**
- * 挂上三个软依赖。`stops` 是调用方收集清理函数的数组（卸载时逐个调用）。
+ * 这个会话现在用哪个提供方/模型（`modelSelection` 投影）。
+ *
+ * 取 `next ?? lastUsed`：用户刚在模型菜单里选了还没发消息时，`next` 才是他**将要**用的那个 ——
+ * 余额胶囊应该跟着它走，而不是等一条消息发出去才换账本。
+ *
+ * 投影没注册、或会话还没物化时回 `null`（这条路径安静降级，胶囊退回账号余额那一路）。
+ *
+ * @param session - 宿主会话对象。
+ * @returns `{provider, model}`；读不到回 `null`。
+ */
+export function sessionModelSelection(session: unknown): HudModelSelection | null {
+  if (modelSelectionReader === null || session === undefined || session === null) return null
+  return modelSelectionReader(session)
+}
+
+/**
+ * 按 id 找宿主会话（找不到回 `null`，不是错误）。
+ *
+ * 先走 `get(id)`（服务自己的字典，O(1)），没有再退回 `list()` 扫一遍：
+ * 前者是我们要的那条路，后者兜住"只有 list 的旧形状"。
+ *
+ * @param sessionId - 会话 id。
+ * @returns 宿主会话对象；找不到回 `null`。
+ */
+export function sessionById(sessionId: string | null): unknown {
+  if (sessionId === null || sessionId === '') return null
+  const sessions = sessionsService()
+  if (sessions === null) return null
+  try {
+    if (typeof sessions.get === 'function') {
+      const hit = sessions.get(sessionId)
+      if (hit !== undefined && hit !== null) return hit
+    }
+  } catch {
+    // `get` 抛了不算失败：下面还有 `list()` 这条路。
+  }
+  try {
+    const list = sessions.list()
+    if (!Array.isArray(list)) return null
+    for (const session of list) {
+      const header = (session as HudSession).header
+      if (header && header.id === sessionId) return session
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+/**
+ * 挂上软依赖。`stops` 是调用方收集清理函数的数组（卸载时逐个调用）。
  *
  * 语义与原实现完全一致：依赖没到齐就**永远不回调**（Cordis 的动态注入），
  * 到齐后把读数器装好，卸载时再清成 null。
@@ -118,6 +171,29 @@ export function registerSoftDependencies(ctx: HudContext, stops: Array<() => voi
           return null
         }
       }
+      modelSelectionReader = (session) => {
+        try {
+          const state = scope.sessionProjections.stateOf(session, 'modelSelection')
+          if (state === undefined || state === null) return null
+          // 注意：`stateOf` 给的是**投影的 state**，不是线上那个 view。两者的字段名不同 ——
+          // state 是 `{lastUsed, pending}`，view 才是 `{lastUsed, next}`（见
+          // `model-selection-projection.js`：`view: state => ({ lastUsed, next: pending ?? lastUsed })`）。
+          // 读错字段的后果很隐蔽：`next` 永远不存在，于是永远退到 `lastUsed` ——
+          // 刚在模型菜单里换了模型、还没发消息时，余额还挂在旧提供方上。
+          const view = state as { pending?: unknown; next?: unknown; lastUsed?: unknown }
+          // `pending` 优先（等价于线上 view 的 `next`）：那是"将要用的账本"。
+          const raw = view.pending ?? view.next ?? view.lastUsed
+          if (raw === null || typeof raw !== 'object') return null
+          const selection = raw as { provider?: unknown; model?: unknown }
+          if (typeof selection.provider !== 'string' || selection.provider === '') return null
+          return {
+            provider: selection.provider,
+            model: typeof selection.model === 'string' ? selection.model : null,
+          }
+        } catch {
+          return null
+        }
+      }
       sessionTurnReader = (session) => {
         try {
           const state = scope.sessionProjections.stateOf(session, 'turnBoundary')
@@ -134,6 +210,7 @@ export function registerSoftDependencies(ctx: HudContext, stops: Array<() => voi
         sessionTurnReader = null
         sessionStatsReader = null
         sessionOutlineReader = null
+        modelSelectionReader = null
       }
     }),
   )

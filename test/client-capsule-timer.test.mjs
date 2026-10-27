@@ -52,7 +52,7 @@ test('计时胶囊：画在 Git 那一行里、排在最后，显示挂钟时长
   )
   assert.ok(tip.includes('turns=27'), `悬停给出轮次/步数，实际 ${tip}`)
 
-  // dock 是竖列：计时必须在**同一条注册**里、且排在最后（这次用例里没有工具，所以是 Git 之后）。
+  // dock 是竖列：计时必须在**同一条注册**里、且排在最后（这次用例里没有工具与余额，所以紧跟 Git）。
   const dock = findByAttr(node, 'dock')
   assert.ok(dock, 'dock 行要存在')
   const inked = findAll(
