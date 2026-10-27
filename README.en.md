@@ -101,13 +101,13 @@ Here it is on a real machine:
 | Third-party relay readable with an API key | whatever remaining quota that relay reports | `$2,265.33` |
 | Relay that exposes the remainder only to a web session (web token configured) | the account balance from the site's own console | `$137.48` |
 | Relay reports "unlimited" / no web token configured | **used** (remaining unknown, never invented) | `used $1.24` |
-| Unrecognised relay (neither protocol answers) | the site id plus `--` (unreadable, said plainly) | `api404 --` |
+| Unrecognised relay (neither protocol answers) | the site id plus `--` (unreadable, said plainly) | `site --` |
 | Not resolved yet (new session / just switched / host not ready) | `--` (**never** the platform account balance as a stand-in) | `--` |
 
 With a web token configured, a relay capsule's hover looks like this — four readings coloured by meaning
 (green = remaining, blue = a count, amber = already spent, grey = labels and timestamps):
 
-![Hovering a relay balance capsule: the bubble reads the site name happycoding, then "balance $137.48" in green, "API requests 3,514" in blue, "$7.51 used on this account" in amber, "$1.24 used on this key" in amber, and "updated 2026-10-27 16:45" in grey; below it the capsule itself "$137.48" and the timer capsule "⏱ 7d 4h 4m"](docs/images/balance-hover.webp)
+![Hovering a relay balance capsule: the bubble reads the site name, then "balance $137.48" in green, "API requests 3,514" in blue, "$7.51 used on this account" in amber, "$1.24 used on this key" in amber, and "updated 2026-10-27 16:45" in grey; below it the capsule itself "$137.48" and the timer capsule "⏱ 7d 4h 4m"](docs/images/balance-hover.webp)
 
 **DeepSeek account balance** (hover)
 

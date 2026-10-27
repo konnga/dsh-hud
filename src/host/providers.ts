@@ -2,7 +2,7 @@
  * 「当前模型是谁家的，就查谁家的余额」——宿主半。
  *
  * 为什么要这么绕：DSH 的账号接口（`remote.account`）只认 DeepSeek 平台账号那一条路。
- * 会话换了提供方（`ur` / `api404` / 官方 API Key ……）之后，那枚余额胶囊显示的是**另一个
+ * 会话换了提供方（某个中转站 / 官方 API Key ……）之后，那枚余额胶囊显示的是**另一个
  * 账本**上的钱，看着像 bug。这里按会话当前的模型选择解析出提供方，再用**它自己的协议**
  * 取一次余额。
  *
@@ -22,7 +22,7 @@
  *     （`placeholderLimit: true`），别拿 `1e8 - 已用` 冒充一个天文数字余额。
  *   - **币种口径**：中转站这套接口的字段名是 `*_usd`，但很多站内部按人民币 1:1 记账。
  *     我们只转述站点自己的数，**不做任何汇率换算**，`currency` 就标站点口径。
- *   - **没有统一标准**：有的站（本机的 `api404`）两条路都 404/502。这种情况报
+ *   - **没有统一标准**：有的站两条路都 404/502。这种情况报
  *     `unsupported`，界面不画胶囊 —— 与"读不到就不画"同一条规矩。
  *
  * 凭据只在这个进程里用：按提供方自己的 `apiKeyEnv` 引用名向 `credentials` 服务要一次，
@@ -140,7 +140,7 @@ function centsRounded(value: number): string {
  * 2. **`total_usage` 的单位是分**（one-api 的 `GetUsage` 把额度换算成
  *    `quota / QuotaPerUnit * 100` 发出来）。实测 `total_usage: 21274.26` 即 $212.74。
  *
- * 「无限」占位：额度是 `1e8` 的站（实测 `ur` / `ccwu` / `happycoding` 两次探测都恰好
+ * 「无限」占位：额度是 `1e8` 的站（实测四个站两次探测都恰好
  * 是 100000000，期间真实用量在涨而它一动不动）——这不是余额，是"无限额度"的哨兵值。
  * 这时剩余额**算不出来**，只能报已用，并用 `placeholderLimit` 把这个事实传给界面。
  *
@@ -194,7 +194,7 @@ interface ProviderSettingsEntry {
  * 从设置投影里认出提供方 →（baseURL、凭据引用）。
  *
  * 只认两个已知命名空间，别的一律不看：
- *   - `llm-pi-ai`：`providers` 字典，键就是提供方 id（`ur` / `muyuan` / …）；
+ *   - `llm-pi-ai`：`providers` 字典，键就是提供方 id（中转站自己的 id / …）；
  *   - `llm-deepseek-api-key`：单提供方 `deepseek-official`，字段就在顶层。
  *
  * 为什么从设置读而不是自己存一份：用户改中转站地址/密钥引用是在「设置 → 模型」里改的，
@@ -266,15 +266,15 @@ function factsOf(
     baseURL: entry.baseURL,
     apiKeyEnv: entry.apiKeyEnv,
     // 账号余额那条路要的凭据，从 API Key 的引用名**推**出来（零配置）：
-    //   UR_API_KEY       → UR_ACCESS_TOKEN   （网页访问令牌）
-    //   UR_API_KEY       → UR_USER_ID        （部分部署要求的 New-Api-User）
+    //   SITE_API_KEY     → SITE_ACCESS_TOKEN （网页访问令牌）
+    //   SITE_API_KEY     → SITE_USER_ID      （部分部署要求的 New-Api-User）
     // 不符合 `*_API_KEY` 形状时就不推导 —— 宁可没有，也不去猜别的引用名。
     accessTokenEnv: refSiblingOf(entry.apiKeyEnv, 'ACCESS_TOKEN'),
     userIdEnv: refSiblingOf(entry.apiKeyEnv, 'USER_ID'),
   }
 }
 
-/** `UR_API_KEY` + `ACCESS_TOKEN` → `UR_ACCESS_TOKEN`；形状不符回 `null`。 */
+/** `SITE_API_KEY` + `ACCESS_TOKEN` → `SITE_ACCESS_TOKEN`；形状不符回 `null`。 */
 function refSiblingOf(apiKeyEnv: string, suffix: string): string | null {
   var tail = '_API_KEY'
   if (!apiKeyEnv.endsWith(tail)) return null
@@ -379,7 +379,7 @@ export async function fetchProviderBalance(
   }
 
   var base = trimSlash(facts.baseURL)
-  // 区间给"全历史"，不是"本月"：实测 ur / muyuan / happycoding / ccwu **都忽略**这两个参数，
+  // 区间给"全历史"，不是"本月"：实测四个中转站**都忽略**这两个参数，
   // 回的始终是这枚 Key 的累计用量。既然区间不生效，就别写一个"本月"的标签去暗示它按月算 ——
   // 标签跟着"这个数到底是什么"走，落在 `usedKey` 这个字段上。
   var end = new Date(at + 86400000).toISOString().slice(0, 10)
@@ -412,7 +412,7 @@ export async function fetchProviderBalance(
 /**
  * new-api 的默认换算率：`quota` 是整数，除以它才是站点自己的货币金额。
  *
- * 站点会把真实值公开在 `GET /api/status` 的 `quota_per_unit` 里（实测 ur = 500000），
+ * 站点会把真实值公开在 `GET /api/status` 的 `quota_per_unit` 里（实测 = 500000），
  * 这里是它取不到时用的兜底 —— new-api 上游的默认值，不是我们编的系数。
  */
 export const QUOTA_PER_UNIT_DEFAULT = 500000

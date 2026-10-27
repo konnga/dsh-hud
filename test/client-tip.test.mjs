@@ -124,11 +124,11 @@ test('气泡：余额那几行拆成「标签灰 + 数字亮」两段，抬头�
   const captured = []
   const ledger = {
     mode: 'provider',
-    provider: 'ur',
+    provider: 'relay-a',
     reason: null,
-    token: { ref: 'UR_ACCESS_TOKEN', configured: true },
+    token: { ref: 'RELAY_A_ACCESS_TOKEN', configured: true },
     balance: {
-      provider: 'ur',
+      provider: 'relay-a',
       kind: 'relay',
       currency: 'USD',
       remaining: '742.23',
@@ -150,7 +150,7 @@ test('气泡：余额那几行拆成「标签灰 + 数字亮」两段，抬头�
   assert.ok(Array.isArray(lines), '气泡内容应当是逐行结构（渲染才能力分标签/数值两种颜色）')
 
   // 抬头：站名整行次要色。
-  assert.deepEqual(lines[0], { text: 'ur', tone: 'muted' })
+  assert.deepEqual(lines[0], { text: 'relay-a', tone: 'muted' })
   // 四行读数：标签与数值分开，数值各带**语义色**（用户要的"重要数字用彩色"）。
   const reading = lines.filter((line) => line.label !== undefined)
   assert.deepEqual(
@@ -175,11 +175,11 @@ test('气泡：标签与数值在拼平文本里有一个空格（否则日志�
   const node = renderProviderPill(
     {
       mode: 'provider',
-      provider: 'ur',
+      provider: 'relay-a',
       reason: null,
-      token: { ref: 'UR_ACCESS_TOKEN', configured: true },
+      token: { ref: 'RELAY_A_ACCESS_TOKEN', configured: true },
       balance: {
-        provider: 'ur',
+        provider: 'relay-a',
         kind: 'relay',
         currency: 'USD',
         remaining: '742.23',

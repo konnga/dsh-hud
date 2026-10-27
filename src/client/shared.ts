@@ -863,7 +863,7 @@ export var BALANCE_RETRY_MS = 30000
  * 填的第三方中转站。两个账本的钱不能混着显示（那正是"胶囊数字看着像 bug"的来源）。
  */
 export interface HudProviderBalance {
-  /** 提供方 id（`ur` / `muyuan` / `deepseek-official` …）。 */
+  /** 提供方 id（中转站的 id / `deepseek-official` …）。 */
   provider: string
   kind: 'official' | 'relay'
   /** 站点自己的记账币种；不做汇率换算。 */
@@ -874,7 +874,7 @@ export interface HudProviderBalance {
    * **整个账号**的累计已用（站点 `/api/user/self` 的 `used_quota`）。
    *
    * 与 `usedKey` 并存而不是二选一：站点上两个数能同时拿到、也能差出一截
-   * （实测 ur：账号 $526.66 / 本 Key $479.44）。
+   * （实测：账号 $526.66 / 本 Key $479.44）。
    */
   usedAccount: string | null
   /** **这枚 API Key** 的累计已用（站点 `/dashboard/billing/usage` 的 `total_usage`）。 */
@@ -929,7 +929,7 @@ export interface HudProviderLedger {
   /**
    * 知道是哪个提供方（但可能读不到它的余额）时的 id。
    *
-   * 为什么要留着：`unavailable` 时胶囊要画 `ur —`，而不是干脆消失 ——
+   * 为什么要留着：`unavailable` 时胶囊要画 `站名 —`，而不是干脆消失 ——
    * 消失会让人分不清"这个站没有余额接口"和"插件坏了"（这正是用户报过的那一幕）。
    */
   provider?: string | null

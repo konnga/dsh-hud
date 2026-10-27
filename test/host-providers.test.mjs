@@ -18,8 +18,8 @@ import {
 test('提供方协议：官方域名走 /user/balance，其余一律当 one-api 家族', () => {
   assert.equal(kindOf('https://api.deepseek.com'), 'official')
   assert.equal(kindOf('https://api.deepseek.com/anthropic'), 'official')
-  assert.equal(kindOf('https://muyuan.do/v1'), 'relay')
-  assert.equal(kindOf('https://api.404-found.uk/v1'), 'relay')
+  assert.equal(kindOf('https://relay-b.example/v1'), 'relay')
+  assert.equal(kindOf('https://relay-x.example/v1'), 'relay')
   // 不是合法 URL 也当 relay（试一次就知道，猜错会明确报 unsupported，不会给出假数字）。
   assert.equal(kindOf('not a url'), 'relay')
 })
@@ -82,7 +82,7 @@ test('官方余额：balance_infos → 钱包 + 赠送额度；形状不对回 n
 /* ------------------------------------------------ 中转站账单（one-api 家族） */
 
 test('中转站账单：hard_limit_usd 就是剩余额度（不再减已用），total_usage 单位是分', () => {
-  // 实测 muyuan：剩余 2265.330862、本月已用 21274.26 分 = $212.74。
+  // 实测某站：剩余 2265.330862、本月已用 21274.26 分 = $212.74。
   const parsed = parseRelayBilling(
     { object: 'billing_subscription', soft_limit_usd: 2265.330862, hard_limit_usd: 2265.330862 },
     { object: 'list', total_usage: 21274.260000000002 },
@@ -97,7 +97,7 @@ test('中转站账单：hard_limit_usd 就是剩余额度（不再减已用）�
 })
 
 test('中转站账单：额度是 1e8 占位值时剩余算不出来，只报已用', () => {
-  // 实测 ur / ccwu / happycoding：两次探测都是 100000000，期间真实用量在涨而它不动 → 是哨兵值。
+  // 实测四个站：两次探测都是 100000000，期间真实用量在涨而它不动 → 是哨兵值。
   const parsed = parseRelayBilling(
     { soft_limit_usd: 100000000, hard_limit_usd: 100000000, system_hard_limit_usd: 100000000 },
     { total_usage: 44171.8558 },
@@ -153,9 +153,9 @@ test('设置投影：从 llm-pi-ai 的 providers 字典与 llm-deepseek-api-key 
       ns: 'llm-pi-ai',
       value: {
         providers: {
-          muyuan: {
-            baseURL: 'https://muyuan.do/v1',
-            apiKeyEnv: 'MUYUAN_API_KEY',
+          'relay-b': {
+            baseURL: 'https://relay-b.example/v1',
+            apiKeyEnv: 'RELAY_B_API_KEY',
             api: 'openai-completions',
           },
           // 缺 apiKeyEnv 的条目跳过（不猜环境变量名）。
@@ -170,15 +170,15 @@ test('设置投影：从 llm-pi-ai 的 providers 字典与 llm-deepseek-api-key 
     // 不认识的命名空间不看。
     { ns: 'ui-theme', value: { preference: 'dark' } },
   ])
-  assert.deepEqual([...facts.keys()].sort(), ['deepseek-official', 'muyuan'])
-  assert.deepEqual(facts.get('muyuan'), {
-    provider: 'muyuan',
+  assert.deepEqual([...facts.keys()].sort(), ['deepseek-official', 'relay-b'])
+  assert.deepEqual(facts.get('relay-b'), {
+    provider: 'relay-b',
     kind: 'relay',
-    baseURL: 'https://muyuan.do/v1',
-    apiKeyEnv: 'MUYUAN_API_KEY',
+    baseURL: 'https://relay-b.example/v1',
+    apiKeyEnv: 'RELAY_B_API_KEY',
     // 账号余额那一路的引用名从上面这枚**推导**出来（零配置）。
-    accessTokenEnv: 'MUYUAN_ACCESS_TOKEN',
-    userIdEnv: 'MUYUAN_USER_ID',
+    accessTokenEnv: 'RELAY_B_ACCESS_TOKEN',
+    userIdEnv: 'RELAY_B_USER_ID',
   })
   assert.equal(facts.get('deepseek-official').kind, 'official')
 })
@@ -191,18 +191,18 @@ test('设置投影：命名空间带 loader 前缀（`include:llm-pi-ai`）时�
       ns: 'include:llm-pi-ai',
       value: {
         providers: {
-          ur: {
-            baseURL: 'https://ultrarouter.org/v1',
-            apiKeyEnv: 'UR_API_KEY',
+          'relay-a': {
+            baseURL: 'https://relay-a.example/v1',
+            apiKeyEnv: 'RELAY_A_API_KEY',
             api: 'openai-completions',
           },
         },
       },
     },
   ])
-  assert.deepEqual([...facts.keys()], ['ur'])
-  assert.equal(facts.get('ur').baseURL, 'https://ultrarouter.org/v1')
-  assert.equal(facts.get('ur').kind, 'relay')
+  assert.deepEqual([...facts.keys()], ['relay-a'])
+  assert.equal(facts.get('relay-a').baseURL, 'https://relay-a.example/v1')
+  assert.equal(facts.get('relay-a').kind, 'relay')
 })
 
 test('设置投影：官方 Key 那条没配 baseURL 时补上游自己的默认值（不编地址）', () => {
@@ -268,10 +268,10 @@ function fakeFetch(routes) {
 const deps = (fetchImpl) => ({ fetch: fetchImpl, now: () => 1_700_000_000_000 })
 
 const RELAY = {
-  provider: 'muyuan',
+  provider: 'relay-b',
   kind: 'relay',
-  baseURL: 'https://muyuan.do/v1',
-  apiKeyEnv: 'MUYUAN_API_KEY',
+  baseURL: 'https://relay-b.example/v1',
+  apiKeyEnv: 'RELAY_B_API_KEY',
 }
 const OFFICIAL = {
   provider: 'deepseek-official',
@@ -287,14 +287,16 @@ test('取数·中转站：两条 URL 都拼对（含本月日期区间），密�
   ])
   const value = await fetchProviderBalance(RELAY, 'sk-relay-secret', deps(fake.fetch))
   assert.ok(value)
-  assert.equal(value.provider, 'muyuan')
+  assert.equal(value.provider, 'relay-b')
   assert.equal(value.kind, 'relay')
   assert.equal(value.remaining, '2265.33')
   assert.equal(value.usedKey, '212.74')
   assert.equal(value.at, 1_700_000_000_000)
 
   assert.equal(fake.calls.length, 2)
-  assert.ok(fake.calls[0].url.startsWith('https://muyuan.do/v1/dashboard/billing/subscription'))
+  assert.ok(
+    fake.calls[0].url.startsWith('https://relay-b.example/v1/dashboard/billing/subscription'),
+  )
   const usageUrl = new URL(fake.calls[1].url)
   assert.equal(usageUrl.pathname, '/v1/dashboard/billing/usage')
   // 区间是"本月 1 号 → 明天"（站点按这个区间算已用）。
@@ -363,13 +365,13 @@ test('取数：subscription 通、usage 挂掉时仍然给出剩余（半个答�
 
 /* ---------------------------------- 中转站「账号余额」（网页令牌那条路） */
 
-// 实测的 /api/status 片段（ur，2026-10-27）。
-const UR_STATUS = {
+// 实测的 /api/status 片段（2026-10-27）。
+const RELAY_A_STATUS = {
   data: { quota_per_unit: 500000, quota_display_type: 'USD', usd_exchange_rate: 6.67, price: 1 },
 }
 
 test('金额口径：从 /api/status 读 quota_per_unit 与显示币种', () => {
-  assert.deepEqual(parseAmountScale(UR_STATUS), {
+  assert.deepEqual(parseAmountScale(RELAY_A_STATUS), {
     quotaPerUnit: 500000,
     currency: 'USD',
     exchangeRate: 6.67,
@@ -389,7 +391,7 @@ test('金额口径：从 /api/status 读 quota_per_unit 与显示币种', () => 
 })
 
 test('账号余额：quota / quota_per_unit = 截图里那个 $855.69，used_quota 是 $526.66，请求数 3685', () => {
-  const scale = parseAmountScale(UR_STATUS)
+  const scale = parseAmountScale(RELAY_A_STATUS)
   // 你截图上的三个数：当前余额 $855.69、总用量 $526.66、API 请求 3685。
   const parsed = parseUserSelfBalance(
     {
@@ -413,7 +415,7 @@ test('账号余额：quota / quota_per_unit = 截图里那个 $855.69，used_quo
 })
 
 test('账号余额：形状不对 / 明确失败都回 null（不猜）', () => {
-  const scale = parseAmountScale(UR_STATUS)
+  const scale = parseAmountScale(RELAY_A_STATUS)
   for (const broken of [
     null,
     {},
@@ -441,13 +443,13 @@ test('账号余额：向零截断两位（余额是钱，不出现第三位小�
   assert.equal(parseUserSelfBalance({ data: { quota: 427845001 } }, scale).remaining, '855.69')
   // 一点点负额度是"没有钱"，归一成 0（不写 `-0.00`）。
   assert.equal(parseUserSelfBalance({ data: { quota: -3 } }, scale).remaining, '0.00')
-  // 但真的透支了就要看见负号（ur 的 key 那个 total_available 就是 -199583909）。
+  // 但真的透支了就要看见负号（某站的 key 那个 total_available 就是 -199583909）。
   assert.equal(parseUserSelfBalance({ data: { quota: -199583909 } }, scale).remaining, '-399.16')
 })
 
 test('账号余额取数：打 origin 的 /api/status（不鉴权）与 /api/user/self（Bearer + New-Api-User）', async () => {
   const fake = fakeFetch([
-    ['/api/status', { status: 200, body: UR_STATUS }],
+    ['/api/status', { status: 200, body: RELAY_A_STATUS }],
     [
       '/api/user/self',
       { status: 200, body: { success: true, data: { quota: 427845000, used_quota: 263330000 } } },
@@ -461,9 +463,9 @@ test('账号余额取数：打 origin 的 /api/status（不鉴权）与 /api/use
   assert.equal(value.placeholderLimit, false, '账号余额是确定值，不是"无限"占位')
 
   // status 那条请求**不该带** Authorization（它是公开接口）；user/self 才带令牌。
-  assert.equal(fake.calls[0].url, 'https://muyuan.do/api/status')
+  assert.equal(fake.calls[0].url, 'https://relay-b.example/api/status')
   assert.equal(fake.calls[0].authorization, undefined)
-  assert.equal(fake.calls[1].url, 'https://muyuan.do/api/user/self')
+  assert.equal(fake.calls[1].url, 'https://relay-b.example/api/user/self')
   assert.equal(fake.calls[1].authorization, 'Bearer web-token-abc')
   assert.equal(fake.calls[1].newApiUser, '936')
 })
@@ -471,7 +473,7 @@ test('账号余额取数：打 origin 的 /api/status（不鉴权）与 /api/use
 test('账号余额取数：令牌无效 / status 拿不到 / 站点不认，一律回 null（退回用量那一路）', async () => {
   // 令牌无效：401。
   const denied = fakeFetch([
-    ['/api/status', { status: 200, body: UR_STATUS }],
+    ['/api/status', { status: 200, body: RELAY_A_STATUS }],
     ['/api/user/self', { status: 401, body: { success: false } }],
   ])
   assert.equal(await fetchUserBalance(RELAY, 'bad', null, deps(denied.fetch)), null)
@@ -498,14 +500,14 @@ test('设置投影：从 API Key 的引用名推导出账号令牌的引用名�
       ns: 'include:llm-pi-ai',
       value: {
         providers: {
-          ur: { baseURL: 'https://ultrarouter.org/v1', apiKeyEnv: 'UR_API_KEY' },
+          'relay-a': { baseURL: 'https://relay-a.example/v1', apiKeyEnv: 'RELAY_A_API_KEY' },
           // 不符合 `*_API_KEY` 形状：不推导（不去猜别的引用名）。
           odd: { baseURL: 'https://example.com/v1', apiKeyEnv: 'SOME_TOKEN' },
         },
       },
     },
   ])
-  assert.equal(facts.get('ur').accessTokenEnv, 'UR_ACCESS_TOKEN')
-  assert.equal(facts.get('ur').userIdEnv, 'UR_USER_ID')
+  assert.equal(facts.get('relay-a').accessTokenEnv, 'RELAY_A_ACCESS_TOKEN')
+  assert.equal(facts.get('relay-a').userIdEnv, 'RELAY_A_USER_ID')
   assert.equal(facts.get('odd').accessTokenEnv, null)
 })

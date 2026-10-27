@@ -3,7 +3,7 @@
  *
  * 为什么需要它：胶囊的取数有 TTL（成功 60 秒），而**换模型不是取数失败**，
  * 它只是让"当前会话用的是哪个提供方"变了。TTL 按时钟算，不按事实算，
- * 所以换完模型最长要等一分钟胶囊才改口径 —— 用户切到 `ur` 之后盯着
+ * 所以换完模型最长要等一分钟胶囊才改口径 —— 用户切到某个中转站之后盯着
  * `¥8.60`（平台账号的钱）看一分钟，会以为插件没跟上（他确实是这么问的）。
  *
  * 触发源选 `sessions` 服务的 `modelSelection` 投影：那是**模型选择本身**的
@@ -126,7 +126,7 @@ export function watchModelSelection(
     unsubscribe = face.subscribe(function () {
       if (disposed) return
       const next = providerOf(face.getSnapshot())
-      // 只认"提供方变了"：同一个站下面换模型（`ur/deepseek-v4.1-flash` → `ur/gpt-6-luna`）
+      // 只认"提供方变了"：同一个站下面换模型（同一站从 deepseek-v4.1-flash 换到 gpt-6-luna）
       // 账本没变，没必要打一次请求。
       if (next === null || next === lastProvider) return
       lastProvider = next

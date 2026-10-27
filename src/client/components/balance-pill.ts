@@ -253,7 +253,7 @@ export function providerBalanceTitle(balance: HudProviderBalance, t: Translate):
   if (parts.length > 0) {
     lines.push({ label: t('balance.bonus'), value: parts.join(' · '), tone: 'muted' })
   }
-  // 两个"已用"是两个账本上的数（ur：账号 $637.56 / 本 Key $536.22），
+  // 两个"已用"是两个账本上的数（账号 $637.56 / 本 Key $536.22），
   // 所以各占一行、各带自己的标签 —— 不合并成一个数，也不互相顶替。
   // 顺序：余额 → 请求数 → 账号已用 → 本 Key 已用。
   // 请求数紧跟在余额下面（用户要的）：它是同一屏里唯一一个"次数"而不是钱，
@@ -415,7 +415,7 @@ export function balancePillNode(
   }
   // 知道是哪个提供方但读不到：**绝不退回平台账号的余额**（那是另一个账本的钱）。
   // 但也别干脆消失 —— 消失分不清"这个站没有余额接口"和"插件坏了"（用户正是这么误判的）。
-  // 折中：画成 `ur --`，悬停里写一句为什么。
+  // 折中：画成 `站名 --`，悬停里写一句为什么。
   if (ledger && ledger.mode === 'unavailable') {
     if (typeof ledger.provider === 'string' && ledger.provider !== '') {
       return unknownProviderPillNode(ledger, options)
@@ -551,7 +551,7 @@ function placeholderPillNode(
 }
 
 /**
- * 画"知道是哪个提供方、但读不到它的余额"的胶囊：`ur --`。
+ * 画"知道是哪个提供方、但读不到它的余额"的胶囊：`站名 --`。
  *
  * 为什么值得画：`—` 是一个**读数**（"这个账本的数读不到"），而空白只是一个疑点。
  * 用户看到空白的第一反应是"插件坏了"，于是去翻日志、重装、重启 —— 那才是真正的成本。
@@ -583,7 +583,7 @@ function unknownProviderPillNode(
         key: 'balance',
         'aria-label': provider,
         onClick: function () {
-          // `ur --` 往往正是"没配后台令牌"的样子，所以这里也要能弹面板。
+          // `站名 --` 往往正是"没配后台令牌"的样子，所以这里也要能弹面板。
           onPillClick(ledger, options.store)
         },
       },

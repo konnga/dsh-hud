@@ -32,7 +32,7 @@ const zh = (options = {}) => ({ t, ...options })
 /** 一个中转站余额快照。 */
 function relayBalance(overrides = {}) {
   return {
-    provider: 'muyuan',
+    provider: 'relay-b',
     kind: 'relay',
     currency: 'USD',
     remaining: '2265.33',
@@ -67,7 +67,7 @@ test('提供方胶囊：剩余额度可算 → 画剩余，悬停给出提供方
 
   hoverPill(node, 'balance-pill')
   const tip = tips[0].text
-  assert.ok(tip.startsWith('muyuan'), `第一行是提供方，实际 ${tip}`)
+  assert.ok(tip.startsWith('relay-b'), `第一行是提供方，实际 ${tip}`)
   assert.ok(tip.includes('$2,265.33'), `剩余额度，实际 ${tip}`)
   assert.ok(tip.includes('本 Key 已用 $212.74'), `本 Key 已用，实际 ${tip}`)
   assert.ok(tip.includes('更新于'), `更新时间，实际 ${tip}`)
@@ -187,25 +187,25 @@ test('提供方胶囊：读不到（unavailable）→ 干脆不画，绝不退�
   )
 })
 
-test('提供方胶囊：读不到但知道是哪个站 → 画 `ur --`，悬停说清原因', () => {
+test('提供方胶囊：读不到但知道是哪个站 → 画 `站名 --`，悬停说清原因', () => {
   const tips = []
   const node = renderProviderPill(
-    { mode: 'unavailable', balance: null, provider: 'api404', reason: 'unsupported' },
+    { mode: 'unavailable', balance: null, provider: 'relay-x', reason: 'unsupported' },
     zh({ methods: { showTip: (key, text) => tips.push({ key, text }) } }),
   )
   const pill = findByAttr(node, 'balance-pill')
   assert.ok(pill, '知道是哪个站就该画一枚中性胶囊')
-  assert.equal(textOf(pill), 'api404 --', `实际 ${textOf(pill)}`)
+  assert.equal(textOf(pill), 'relay-x --', `实际 ${textOf(pill)}`)
 
   hoverPill(node, 'balance-pill')
-  assert.ok(tips[0].text.startsWith('api404'), `第一行是提供方，实际 ${tips[0].text}`)
+  assert.ok(tips[0].text.startsWith('relay-x'), `第一行是提供方，实际 ${tips[0].text}`)
   assert.ok(tips[0].text.includes('该站不提供余额接口'), `第二行是原因，实际 ${tips[0].text}`)
 
   // 同一枚胶囊点一下仍然重取（走的是提供方那一路）。
   const refreshed = []
   const clickable = findByAttr(
     renderProviderPill(
-      { mode: 'unavailable', balance: null, provider: 'api404', reason: 'unsupported' },
+      { mode: 'unavailable', balance: null, provider: 'relay-x', reason: 'unsupported' },
       zh({ methods: { loadProviderBalance: (force) => refreshed.push(force === true) } }),
     ),
     'balance-pill',
@@ -264,7 +264,7 @@ test('提供方胶囊：两个"已用"是两个账本，各占一行、各带自
     return tips[0].text.split('\n')
   }
 
-  // 两本账同时存在（实测 ur：账号 $526.66 / 本 Key $479.44）→ 两行都要在。
+  // 两本账同时存在（实测：账号 $526.66 / 本 Key $479.44）→ 两行都要在。
   const both = tipLines({ usedAccount: '526.66', usedKey: '479.44' })
   assert.ok(both.includes('账号已用 $526.66'), `账号那本账，实际 ${both.join(' | ')}`)
   assert.ok(both.includes('本 Key 已用 $479.44'), `Key 那本账，实际 ${both.join(' | ')}`)
@@ -301,7 +301,7 @@ test('提供方胶囊：账号那一路连「API 请求 3685」一起显示（�
   const node = renderProviderPill(
     ledger(
       relayBalance({
-        provider: 'ur',
+        provider: 'relay-a',
         remaining: '855.69',
         usedAccount: '526.66',
         usedKey: '479.44',
@@ -316,7 +316,7 @@ test('提供方胶囊：账号那一路连「API 请求 3685」一起显示（�
   assert.equal(textOf(pill).trim(), '$855.69', '胶囊画后台「当前余额」')
   hoverPill(node, 'balance-pill')
   const tip = tips[0].text
-  assert.ok(tip.includes('ur'), tip)
+  assert.ok(tip.includes('relay-a'), tip)
   assert.ok(tip.includes('账号已用 $526.66'), tip)
   assert.ok(tip.includes('API 请求 3,685'), `千分位，实际 ${tip}`)
   assert.ok(tip.includes('本 Key 已用 $479.44'), tip)
@@ -332,7 +332,7 @@ test('提供方胶囊：行序是 余额 → API 请求 → 账号已用 → 本
   const node = renderProviderPill(
     ledger(
       relayBalance({
-        provider: 'ur',
+        provider: 'relay-a',
         remaining: '745.58',
         usedAccount: '637.56',
         usedKey: '536.22',
@@ -346,7 +346,7 @@ test('提供方胶囊：行序是 余额 → API 请求 → 账号已用 → 本
   hoverPill(node, 'balance-pill')
   const lines = tips[0].text.split('\n')
   // 第一行是提供方，最后一行是"更新于"（时间随时区变，只核对前缀）。
-  assert.equal(lines[0], 'ur')
+  assert.equal(lines[0], 'relay-a')
   assert.equal(lines[1], '余额 $745.58')
   assert.equal(lines[2], 'API 请求 4,458')
   assert.equal(lines[3], '账号已用 $637.56')
@@ -358,7 +358,7 @@ test('提供方胶囊：行序是 余额 → API 请求 → 账号已用 → 本
 test('提供方胶囊：没有请求数时那一行不画（不写 0，不写空）', () => {
   const tips = []
   const node = renderProviderPill(
-    ledger(relayBalance({ provider: 'ur', requests: null })),
+    ledger(relayBalance({ provider: 'relay-a', requests: null })),
     zh({ methods: { showTip: (key, text) => tips.push({ key, text }) } }),
   )
   hoverPill(node, 'balance-pill')

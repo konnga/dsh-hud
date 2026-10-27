@@ -81,8 +81,8 @@ export const zh = {
   'balance.tokenSave': '保存',
   'balance.tokenSaving': '保存中…',
   'balance.tokenCancel': '取消',
-  // 这一行换了两次：先是「将写入 UR_ACCESS_TOKEN」（用户问"这是什么"），
-  // 再是「只存给 ur · UR_ACCESS_TOKEN」（用户还是只想看一句话）。
+  // 这一行换了两次：先是「将写入 SITE_ACCESS_TOKEN」（用户问"这是什么"），
+  // 再是「只存给 <站名> · <引用名>」（用户还是只想看一句话）。
   // 用户真正关心的是"这东西会往哪儿传"，答案就是：不往外传，只落在本地凭据库。
   'balance.tokenRef': '只存储于本地',
   'balance.tokenError.unknown-provider': '不认识这个提供方，先确认会话用的模型来自哪个站',

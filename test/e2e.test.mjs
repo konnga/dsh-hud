@@ -135,7 +135,7 @@ test('provider-balance 端点：按会话把三种结论原样转给浏览器半
       outcome: {
         ok: true,
         value: {
-          provider: 'muyuan',
+          provider: 'relay-b',
           kind: 'relay',
           remaining: '1',
           usedAccount: null,
@@ -144,7 +144,7 @@ test('provider-balance 端点：按会话把三种结论原样转给浏览器半
       },
       expect: (value) => {
         assert.equal(value.available, true)
-        assert.equal(value.balance.provider, 'muyuan')
+        assert.equal(value.balance.provider, 'relay-b')
       },
     },
     {
@@ -158,11 +158,11 @@ test('provider-balance 端点：按会话把三种结论原样转给浏览器半
     {
       outcome: {
         ok: false,
-        failure: { provider: 'api404', kind: 'relay', reason: 'unsupported', message: null },
+        failure: { provider: 'relay-x', kind: 'relay', reason: 'unsupported', message: null },
       },
       expect: (value) => {
         assert.equal(value.available, false)
-        assert.equal(value.provider, 'api404')
+        assert.equal(value.provider, 'relay-x')
         assert.equal(value.reason, 'unsupported')
       },
     },
@@ -198,7 +198,7 @@ test('provider-credential 端点：写入器没装时报 unsupported（不是静
   setProviderTokenWriter(null)
   try {
     const result = await rpcCall(handler, CHANNEL, 'provider-credential', {
-      args: { provider: 'ur', token: 'x' },
+      args: { provider: 'relay-a', token: 'x' },
     })
     assert.equal(result.ok, true)
     assert.equal(result.value.saved, false)
@@ -215,17 +215,17 @@ test('provider-credential 端点：令牌只经宿主写一次，答复里绝不
   const seen = []
   setProviderTokenWriter((provider, token) => {
     seen.push({ provider, token })
-    return Promise.resolve({ ok: true, ref: 'UR_ACCESS_TOKEN' })
+    return Promise.resolve({ ok: true, ref: 'RELAY_A_ACCESS_TOKEN' })
   })
   try {
     const result = await rpcCall(handler, CHANNEL, 'provider-credential', {
-      args: { provider: 'ur', token: 'sk-dashboard-token' },
+      args: { provider: 'relay-a', token: 'sk-dashboard-token' },
     })
     assert.equal(result.ok, true)
-    assert.deepEqual(result.value, { saved: true, ref: 'UR_ACCESS_TOKEN' })
+    assert.deepEqual(result.value, { saved: true, ref: 'RELAY_A_ACCESS_TOKEN' })
     // 载荷里除了 `ref` 什么都没有 —— 令牌绝不能出现在答复里。
     assert.equal(JSON.stringify(result.value).includes('sk-dashboard-token'), false)
-    assert.deepEqual(seen, [{ provider: 'ur', token: 'sk-dashboard-token' }])
+    assert.deepEqual(seen, [{ provider: 'relay-a', token: 'sk-dashboard-token' }])
   } finally {
     setProviderTokenWriter(null)
   }

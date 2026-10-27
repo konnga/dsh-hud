@@ -3,11 +3,11 @@
  *
  * 背景：胶囊的取数有 TTL（成功 60 秒），而换模型**不是取数失败** ——
  * 它只是让"当前会话用哪个提供方"变了。TTL 按时钟算、不按事实算，
- * 于是切到 `ur` 之后会先盯着平台账号的 `¥8.60` 看满一分钟。用户就是这么报的。
+ * 于是切到中转站之后会先盯着平台账号的 `¥8.60` 看满一分钟。用户就是这么报的。
  *
  * 这里钉住四件事：
  *   1. 提供方变了 → 立刻重取（且是 force，跳过缓存）；
- *   2. 同一站里换模型（ur 的两个模型）→ **不**重取，账本没变；
+ *   2. 同一站里换模型（同一站的两个模型）→ **不**重取，账本没变；
  *   3. `pending` 优先 —— 菜单里刚点下的模型，哪怕一条消息都还没发，账本也该换；
  *   4. 没有 `sessions` 服务 / 卸载之后 → 一次都不触发（软依赖，不许崩）。
  */
@@ -77,7 +77,7 @@ function settle() {
   return new Promise((resolve) => setImmediate(resolve))
 }
 
-test('换模型：提供方从平台账号切到 ur → 立刻强制重取一次', async () => {
+test('换模型：提供方从平台账号切到中转站 → 立刻强制重取一次', async () => {
   const sessions = fakeSessions()
   const { mounted, store, calls } = mountWithSessions({ sessions: sessions.service })
   try {
@@ -86,10 +86,10 @@ test('换模型：提供方从平台账号切到 ur → 立刻强制重取一次
     await settle()
     const before = balanceForces(calls).length
 
-    // 用户切到 ur 的模型。
+    // 用户切到中转站的模型。
     sessions.select({
       lastUsed: { provider: 'deepseek-account' },
-      pending: { provider: 'ur', model: 'deepseek-v4.1-flash' },
+      pending: { provider: 'relay-a', model: 'deepseek-v4.1-flash' },
     })
     await settle()
 
@@ -106,14 +106,14 @@ test('换模型：同一个站里换模型 → 不重取（账本没变，别白
   const { mounted, store, calls } = mountWithSessions({ sessions: sessions.service })
   try {
     store.bindSession('session-a', '/tmp/repo')
-    sessions.select({ lastUsed: { provider: 'ur' }, pending: null })
+    sessions.select({ lastUsed: { provider: 'relay-a' }, pending: null })
     await settle()
     const before = calls.filter((call) => call.method === 'provider-balance').length
 
-    // ur 下面从 flash 换到 luna：还是同一个站、同一本账。
+    // 同一站里从 flash 换到 luna：还是同一个站、同一本账。
     sessions.select({
-      lastUsed: { provider: 'ur', model: 'deepseek-v4.1-flash' },
-      pending: { provider: 'ur', model: 'gpt-6-luna' },
+      lastUsed: { provider: 'relay-a', model: 'deepseek-v4.1-flash' },
+      pending: { provider: 'relay-a', model: 'gpt-6-luna' },
     })
     await settle()
 
@@ -128,16 +128,16 @@ test('换模型：同一个站里换模型 → 不重取（账本没变，别白
 })
 
 test('换模型：`pending` 优先 —— 刚点下、还没发消息，账本也要立刻换', async () => {
-  // 这是真实场景：菜单里选了 ur 的模型，第一条消息还没发出去。
+  // 这是真实场景：菜单里选了中转站的模型，第一条消息还没发出去。
   // 若只读 `lastUsed`，胶囊会继续显示上一个站的钱，直到那条消息发出为止。
   const sessions = fakeSessions()
   const { mounted, store, calls } = mountWithSessions({ sessions: sessions.service })
   try {
     store.bindSession('session-a', '/tmp/repo')
-    // lastUsed 仍指向平台账号，pending 已经是 ur。
+    // lastUsed 仍指向平台账号，pending 已经是中转站。
     sessions.select({
       lastUsed: { provider: 'deepseek-account' },
-      pending: { provider: 'ur', model: 'deepseek-v4.1-flash' },
+      pending: { provider: 'relay-a', model: 'deepseek-v4.1-flash' },
     })
     await settle()
     assert.equal(
@@ -169,14 +169,14 @@ test('换模型：卸载后不再触发（订阅与补挂定时器都要收拾�
   const { mounted, store, calls } = mountWithSessions({ sessions: sessions.service })
   store.bindSession('session-a', '/tmp/repo')
   await settle()
-  sessions.select({ lastUsed: { provider: 'ur' }, pending: null })
+  sessions.select({ lastUsed: { provider: 'relay-a' }, pending: null })
   await settle()
 
   mounted.dispose()
   assert.equal(sessions.subscriptionCount(), 0, '卸载必须退订，否则投影那边会一直留着回调')
 
   const before = balanceForces(calls).length
-  sessions.select({ lastUsed: { provider: 'happycoding' }, pending: null })
+  sessions.select({ lastUsed: { provider: 'relay-c' }, pending: null })
   await settle()
   assert.equal(balanceForces(calls).length, before, '卸载之后不该再有任何重取')
 })

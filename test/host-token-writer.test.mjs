@@ -14,7 +14,7 @@ import test from 'node:test'
 
 import { createProviderTokenWriter, PROVIDER_TOKEN_MAX } from '../lib/host/provider-balance.js'
 
-/** 真实形状的设置投影：`ur` / 一个不符合 `*_API_KEY` 形状的怪名字。 */
+/** 真实形状的设置投影：一个中转站 / 一个不符合 `*_API_KEY` 形状的怪名字。 */
 function fakeCtx(options = {}) {
   const written = []
   const services = {
@@ -25,9 +25,9 @@ function fakeCtx(options = {}) {
             ns: 'llm-pi-ai',
             value: {
               providers: {
-                ur: {
-                  baseURL: 'https://ultrarouter.org/v1',
-                  apiKeyEnv: 'UR_API_KEY',
+                'relay-a': {
+                  baseURL: 'https://relay-a.example/v1',
+                  apiKeyEnv: 'RELAY_A_API_KEY',
                   api: 'openai-completions',
                 },
                 // 不符合 `*_API_KEY` 形状：推导不出令牌引用名，就该拒绝写。
@@ -70,15 +70,15 @@ function fakeCtx(options = {}) {
 test('写入器：令牌写到**推导出来的** `*_ACCESS_TOKEN`，客户端全程不用知道引用名', async () => {
   const { ctx, written } = fakeCtx()
   const write = createProviderTokenWriter(ctx)
-  const result = await write('ur', 'sk-dashboard-token')
-  assert.deepEqual(result, { ok: true, ref: 'UR_ACCESS_TOKEN' })
-  assert.deepEqual(written, [{ ref: 'UR_ACCESS_TOKEN', value: 'sk-dashboard-token' }])
+  const result = await write('relay-a', 'sk-dashboard-token')
+  assert.deepEqual(result, { ok: true, ref: 'RELAY_A_ACCESS_TOKEN' })
+  assert.deepEqual(written, [{ ref: 'RELAY_A_ACCESS_TOKEN', value: 'sk-dashboard-token' }])
 })
 
 test('写入器：首尾空白被剪掉（从浏览器复制十次有八次带个尾换行）', async () => {
   const { ctx, written } = fakeCtx()
   const write = createProviderTokenWriter(ctx)
-  assert.equal((await write('ur', '  sk-with-padding\n')).ok, true)
+  assert.equal((await write('relay-a', '  sk-with-padding\n')).ok, true)
   assert.equal(written[0].value, 'sk-with-padding', '存进去的必须是没有空白的那个值')
 })
 
@@ -98,7 +98,7 @@ test('写入器：脏令牌一律不写（空 / 纯空白 / 中间有空白 / �
     { token: 'sk-x' },
   ]
   for (const value of dirty) {
-    const result = await write('ur', value)
+    const result = await write('relay-a', value)
     assert.equal(result.ok, false, `应当拒绝：${JSON.stringify(value)}`)
     assert.equal(result.reason, 'bad-token', `原因应当是 bad-token：${JSON.stringify(value)}`)
   }
@@ -126,7 +126,7 @@ test('写入器：提供方的 Key 引用名不是 `*_API_KEY` 形状 → 推导
 test('写入器：凭据服务不在 → no-credentials（而不是假装存好了）', async () => {
   const { ctx } = fakeCtx({ withoutCredentials: true })
   const write = createProviderTokenWriter(ctx)
-  const result = await write('ur', 'sk-x')
+  const result = await write('relay-a', 'sk-x')
   assert.equal(result.ok, false)
   assert.equal(result.reason, 'no-credentials')
 })
@@ -135,7 +135,7 @@ test('写入器：凭据服务抛错 → failed，且把原因带回来（面板
   const { ctx } = fakeCtx()
   ctx.get('credentials').set = () => Promise.reject(new Error('disk full'))
   const write = createProviderTokenWriter(ctx)
-  const result = await write('ur', 'sk-x')
+  const result = await write('relay-a', 'sk-x')
   assert.equal(result.ok, false)
   assert.equal(result.reason, 'failed')
   assert.equal(result.message, 'disk full')
@@ -144,6 +144,6 @@ test('写入器：凭据服务抛错 → failed，且把原因带回来（面板
 test('写入器：答复里没有令牌本身（只有引用名）', async () => {
   const { ctx } = fakeCtx()
   const write = createProviderTokenWriter(ctx)
-  const result = await write('ur', 'sk-very-secret')
+  const result = await write('relay-a', 'sk-very-secret')
   assert.equal(JSON.stringify(result).includes('sk-very-secret'), false)
 })

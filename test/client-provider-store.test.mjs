@@ -43,7 +43,7 @@ function readyReply(overrides = {}) {
     value: {
       available: true,
       balance: {
-        provider: 'muyuan',
+        provider: 'relay-b',
         kind: 'relay',
         currency: 'USD',
         remaining: '2265.33',
@@ -73,7 +73,7 @@ test('提供方切片：读到余额 → 账本切到 provider，并带上会话
 
   const ledger = store.getSnapshot().provider
   assert.equal(ledger.mode, 'provider')
-  assert.equal(ledger.balance.provider, 'muyuan')
+  assert.equal(ledger.balance.provider, 'relay-b')
   assert.equal(ledger.balance.remaining, '2265.33')
   assert.equal(ledger.balance.usedKey, '212.74')
 })
@@ -97,7 +97,7 @@ test('提供方切片：读不到（不支持的站 / 没密钥 / 没会话）�
       ok: true,
       value: {
         available: false,
-        provider: 'api404',
+        provider: 'relay-x',
         kind: 'relay',
         reason: 'unsupported',
         message: null,
@@ -107,7 +107,7 @@ test('提供方切片：读不到（不支持的站 / 没密钥 / 没会话）�
       ok: true,
       value: {
         available: false,
-        provider: 'muyuan',
+        provider: 'relay-b',
         kind: 'relay',
         reason: 'no-key',
         message: null,
@@ -165,7 +165,7 @@ test('提供方切片：换会话就换账本（不吃上一个会话的结论�
       const sessionId = payload.args.sessionId
       return Promise.resolve(
         readyReply({
-          provider: sessionId === 'session-a' ? 'muyuan' : 'ur',
+          provider: sessionId === 'session-a' ? 'relay-b' : 'relay-a',
           remaining: sessionId === 'session-a' ? '10.00' : null,
           usedKey: sessionId === 'session-a' ? null : '441.72',
           placeholderLimit: sessionId !== 'session-a',
@@ -178,13 +178,13 @@ test('提供方切片：换会话就换账本（不吃上一个会话的结论�
   store.bindSession('session-a', '/tmp/repo')
   await store.loadProviderBalance()
   await settle()
-  assert.equal(store.getSnapshot().provider.balance.provider, 'muyuan')
+  assert.equal(store.getSnapshot().provider.balance.provider, 'relay-b')
 
   // 换会话：TTL 还没到，但账本必须换（这是"按当前会话查"的核心）。
   store.bindSession('session-b', '/tmp/repo')
   await store.loadProviderBalance()
   await settle()
-  assert.equal(store.getSnapshot().provider.balance.provider, 'ur')
+  assert.equal(store.getSnapshot().provider.balance.provider, 'relay-a')
   assert.equal(store.getSnapshot().provider.balance.remaining, null)
   assert.deepEqual(seen, ['session-a', 'session-b'])
 })
@@ -244,15 +244,15 @@ test('绑定会话就顺手取一次（用户报过的那一幕：要等五分�
   assert.equal(calls.length, 1, '绑会话之后应当立刻问一次账本')
   assert.deepEqual(calls[0].args, { sessionId: 'session-1', force: false })
   assert.equal(store.getSnapshot().provider.mode, 'provider')
-  assert.equal(store.getSnapshot().provider.balance.provider, 'muyuan')
+  assert.equal(store.getSnapshot().provider.balance.provider, 'relay-b')
 })
 
-test('读不到时账本记下提供方与原因（胶囊据此画 `ur —`，而不是消失）', async () => {
+test('读不到时账本记下提供方与原因（胶囊据此画 `站名 --`，而不是消失）', async () => {
   const { store } = mountWithProvider(() => ({
     ok: true,
     value: {
       available: false,
-      provider: 'api404',
+      provider: 'relay-x',
       kind: 'relay',
       reason: 'unsupported',
       message: null,
@@ -263,7 +263,7 @@ test('读不到时账本记下提供方与原因（胶囊据此画 `ur —`，�
   await settle()
   const ledger = store.getSnapshot().provider
   assert.equal(ledger.mode, 'unavailable')
-  assert.equal(ledger.provider, 'api404')
+  assert.equal(ledger.provider, 'relay-x')
   assert.equal(ledger.reason, 'unsupported')
   assert.equal(ledger.balance, null)
 })
@@ -293,17 +293,17 @@ test('换会话时不吃上一个会话的在途请求（否则新账本要白�
   )
 
   // 先回来的那个属于 A，当前会话是 B → 结论要丢掉，不能画成 B 的余额。
-  pending[0].resolve(readyReply({ provider: 'muyuan' }))
+  pending[0].resolve(readyReply({ provider: 'relay-b' }))
   await settle()
-  assert.notEqual(store.getSnapshot().provider.balance?.provider, 'muyuan')
+  assert.notEqual(store.getSnapshot().provider.balance?.provider, 'relay-b')
 
   pending[1].resolve(
-    readyReply({ provider: 'ur', remaining: null, usedKey: '451.95', placeholderLimit: true }),
+    readyReply({ provider: 'relay-a', remaining: null, usedKey: '451.95', placeholderLimit: true }),
   )
   await settle()
   const ledger = store.getSnapshot().provider
   assert.equal(ledger.mode, 'provider')
-  assert.equal(ledger.balance.provider, 'ur')
+  assert.equal(ledger.balance.provider, 'relay-a')
 })
 
 test('点胶囊那次是 force：要能绕过宿主的 60s 缓存（"我刚配好令牌怎么还是旧数"）', async () => {
@@ -353,7 +353,7 @@ function mountWithCredential(credentialReply) {
 }
 
 /** 打开面板（真 store 的面：`openTokenPanel(provider, ref)`）。 */
-function openPanel(store, provider = 'ur', ref = 'UR_ACCESS_TOKEN') {
+function openPanel(store, provider = 'relay-a', ref = 'RELAY_A_ACCESS_TOKEN') {
   store.openTokenPanel(provider, ref)
   assert.equal(store.getSnapshot().tokenPanel.open, true, '打开后应当处于打开态')
 }
@@ -361,7 +361,7 @@ function openPanel(store, provider = 'ur', ref = 'UR_ACCESS_TOKEN') {
 test('存成功 → 面板当场关闭（不等定时器，也不等重新取数）', async () => {
   const { store, calls } = mountWithCredential(() => ({
     ok: true,
-    value: { saved: true, ref: 'UR_ACCESS_TOKEN' },
+    value: { saved: true, ref: 'RELAY_A_ACCESS_TOKEN' },
   }))
   store.bindSession('session-1', '/tmp/repo')
   openPanel(store)
@@ -396,7 +396,7 @@ test('存成功 → 即使重新取数很慢，面板也早就关了（不给网
   const mounted = mountClient({
     rpc(channel, method, payload) {
       if (method === 'provider-credential') {
-        return Promise.resolve({ ok: true, value: { saved: true, ref: 'UR_ACCESS_TOKEN' } })
+        return Promise.resolve({ ok: true, value: { saved: true, ref: 'RELAY_A_ACCESS_TOKEN' } })
       }
       // 余额那一路**永不立即答复**：模拟宿主超时（8 秒）那种慢法。
       if (method === 'provider-balance') return hanging
@@ -432,7 +432,7 @@ test('存失败 → 面板**不关**，并带上原因（要留着让人改完�
   assert.equal(panel.open, true, '失败时不能把面板关掉，否则原因没处看')
   assert.equal(panel.saving, false, '别卡在"保存中…"')
   assert.equal(panel.error, 'bad-token')
-  assert.equal(panel.provider, 'ur', '提供方要留着，用户改一改还能再存')
+  assert.equal(panel.provider, 'relay-a', '提供方要留着，用户改一改还能再存')
 })
 
 test('存失败（端点整个挂掉）→ 面板同样不关，报 failed', async () => {
@@ -453,17 +453,17 @@ test('存失败（端点整个挂掉）→ 面板同样不关，报 failed', asy
 test('存成功后再打开面板 → 是干净的一张白纸（上一轮的错/输入不残留）', async () => {
   const { store } = mountWithCredential(() => ({
     ok: true,
-    value: { saved: true, ref: 'UR_ACCESS_TOKEN' },
+    value: { saved: true, ref: 'RELAY_A_ACCESS_TOKEN' },
   }))
   store.bindSession('session-1', '/tmp/repo')
   openPanel(store)
   await store.saveProviderToken('sk-dashboard-token')
-  openPanel(store, 'muyuan', 'MUYUAN_ACCESS_TOKEN')
+  openPanel(store, 'relay-b', 'RELAY_B_ACCESS_TOKEN')
   const panel = store.getSnapshot().tokenPanel
   assert.equal(panel.open, true)
   assert.equal(panel.error, null)
   assert.equal(panel.saving, false)
-  assert.equal(panel.provider, 'muyuan')
+  assert.equal(panel.provider, 'relay-b')
 })
 
 test('强制重取：先发后到的旧结论不能盖掉新结论（旧凭据那次请求回来得晚）', async () => {
@@ -492,14 +492,19 @@ test('强制重取：先发后到的旧结论不能盖掉新结论（旧凭据�
 
   // 新凭据那个先回：读到 $855.69。
   pending[1].resolve(
-    readyReply({ provider: 'ur', remaining: '855.69', usedAccount: '526.66', usedKey: '479.44' }),
+    readyReply({
+      provider: 'relay-a',
+      remaining: '855.69',
+      usedAccount: '526.66',
+      usedKey: '479.44',
+    }),
   )
   await forced
   await settle()
   assert.equal(store.getSnapshot().provider.balance.remaining, '855.69')
 
   // 旧凭据那个后回：读到的还是"只有本 Key 已用"。它必须被丢弃。
-  pending[0].resolve(readyReply({ provider: 'ur', remaining: null, usedKey: '479.44' }))
+  pending[0].resolve(readyReply({ provider: 'relay-a', remaining: null, usedKey: '479.44' }))
   await settle()
   const ledger = store.getSnapshot().provider
   assert.equal(ledger.balance.remaining, '855.69', '旧请求后到，不该把新结论盖掉')
@@ -513,25 +518,25 @@ test('账本：provider 模式下 ledger.provider 必须有值（否则"配令�
   // `provider` 只从 `extra` 取 → `ledger.provider === null` → 面板打开后 provider 为空
   // → `saveProviderToken` 静默 `return false`：不报错、不发请求、什么都不发生。
   // 用户的原话就是"我保存了没什么变化"。
-  const { store } = mountWithProvider(() => readyReply({ provider: 'ur' }))
+  const { store } = mountWithProvider(() => readyReply({ provider: 'relay-a' }))
   store.bindSession('session-1', '/tmp/repo')
   await store.loadProviderBalance()
   await settle()
 
   const ledger = store.getSnapshot().provider
   assert.equal(ledger.mode, 'provider')
-  assert.equal(ledger.provider, 'ur', '账本自己要记得是哪个站')
+  assert.equal(ledger.provider, 'relay-a', '账本自己要记得是哪个站')
   assert.equal(ledger.provider, ledger.balance.provider, '两处不能不一致')
 
   // 点胶囊这条路径要能拿到站名（真 store 里 `onPillClick` 就是把 ledger 交给面板的）。
-  store.openTokenPanel(ledger.provider, 'UR_ACCESS_TOKEN')
-  assert.equal(store.getSnapshot().tokenPanel.provider, 'ur')
+  store.openTokenPanel(ledger.provider, 'RELAY_A_ACCESS_TOKEN')
+  assert.equal(store.getSnapshot().tokenPanel.provider, 'relay-a')
 })
 
 test('存令牌：面板里没有提供方 → 报 unknown-provider（绝不静默失败）', async () => {
   const { store, calls } = mountWithCredential(() => ({
     ok: true,
-    value: { saved: true, ref: 'UR_ACCESS_TOKEN' },
+    value: { saved: true, ref: 'RELAY_A_ACCESS_TOKEN' },
   }))
   store.bindSession('session-1', '/tmp/repo')
   // 故意绕过 openTokenPanel，直接造一个 provider 为空的面板。
@@ -670,8 +675,8 @@ test('换会话：立刻查一次，并且先把旧账本清成 `--`（不顶着
     rpc(channel, method, payload) {
       if (method !== 'provider-balance') return Promise.resolve({ ok: true, value: null })
       calls.push(payload.args.sessionId)
-      // 会话 a 用 muyuan，会话 b 用 ur。
-      const provider = payload.args.sessionId === 'session-b' ? 'ur' : 'muyuan'
+      // 会话 a 用一个站，会话 b 用另一个站。
+      const provider = payload.args.sessionId === 'session-b' ? 'relay-a' : 'relay-b'
       return Promise.resolve({
         ok: true,
         value: {
@@ -680,7 +685,7 @@ test('换会话：立刻查一次，并且先把旧账本清成 `--`（不顶着
             provider,
             kind: 'relay',
             currency: 'USD',
-            remaining: provider === 'ur' ? '742.23' : '2265.33',
+            remaining: provider === 'relay-a' ? '742.23' : '2265.33',
             usedAccount: null,
             usedKey: null,
             placeholderLimit: false,
@@ -697,7 +702,7 @@ test('换会话：立刻查一次，并且先把旧账本清成 `--`（不顶着
 
   store.bindSession('session-a', '/tmp/repo')
   await settle()
-  assert.equal(store.getSnapshot().provider.balance.provider, 'muyuan')
+  assert.equal(store.getSnapshot().provider.balance.provider, 'relay-b')
 
   // 切到会话 b：**绑定那一瞬**旧账本就该没了（同步的，不等任何 Promise）。
   store.bindSession('session-b', '/tmp/repo')
@@ -710,7 +715,7 @@ test('换会话：立刻查一次，并且先把旧账本清成 `--`（不顶着
   await settle()
   assert.deepEqual(calls, ['session-a', 'session-b'], '切会话要立刻问新会话的账本')
   const after = store.getSnapshot().provider
-  assert.equal(after.balance.provider, 'ur')
+  assert.equal(after.balance.provider, 'relay-a')
   assert.equal(after.balance.remaining, '742.23')
   mounted.dispose?.()
 })
@@ -731,16 +736,16 @@ test('换会话：上一个会话迟到的答复不会落到新会话头上', as
   assert.equal(pending.length, 2, '两个会话各问了一次')
 
   // 新会话的答复先到。
-  pending[1].resolve(readyReply({ provider: 'ur', remaining: '742.23' }))
+  pending[1].resolve(readyReply({ provider: 'relay-a', remaining: '742.23' }))
   await settle()
   assert.equal(store.getSnapshot().provider.balance.remaining, '742.23')
 
   // 旧会话的答复后到：它属于另一个账本，必须被丢弃。
-  pending[0].resolve(readyReply({ provider: 'muyuan', remaining: '2265.33' }))
+  pending[0].resolve(readyReply({ provider: 'relay-b', remaining: '2265.33' }))
   await settle()
   assert.equal(
     store.getSnapshot().provider.balance.provider,
-    'ur',
+    'relay-a',
     '旧会话迟到的答复不该覆盖新会话的账本',
   )
   mounted.dispose?.()

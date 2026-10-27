@@ -8,7 +8,7 @@
  * 而没有这个面板时，唯一的配法是让用户去手改 `~/.dsh/.credentials.yaml` ——
  * 那是 DSH 的凭据库，手滑一个缩进整份凭据就读不出来了。所以这里做三件事：
  *
- *   1. 只问**一样东西**：令牌。引用名（`UR_ACCESS_TOKEN`）由宿主从设置投影推导，
+ *   1. 只问**一样东西**：令牌。引用名（`SITE_ACCESS_TOKEN`）由宿主从设置投影推导，
  *      用户不用知道它叫什么；
  *   2. 粘贴即存：`⌘V` 或按钮都行，存完立刻重取一次读数（`saveProviderToken` 里做）；
  *   3. 令牌**不回显**：输入框 `type=password`，store 不持有它，宿主也不回传。
@@ -109,7 +109,7 @@ export function TokenPanel(props: TokenPanelProps): React.ReactElement | null {
   )
 
   // 屏上只留一句话：**只存储于本地**（用户只想知道它会不会往外传）。
-  // 引用名（`UR_ACCESS_TOKEN`）挪进 `title` —— 肉眼看不见，但排查时鼠标一停就知道
+  // 引用名（`SITE_ACCESS_TOKEN`）挪进 `title` —— 肉眼看不见，但排查时鼠标一停就知道
   // 该去凭据里翻哪个名字删掉，不必为此在白话文案里塞一个变量名。
   var refTitle =
     typeof panel.ref === 'string' && panel.ref !== ''

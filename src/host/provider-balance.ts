@@ -281,7 +281,7 @@ export function createProviderBalanceReader(
     // 两条路**都走一遍再合并**，不是二选一：它们给的是两本不同的账。
     //   - 账号路（要后台凭据）：剩余余额 + 账号累计已用 + 请求数；
     //   - Key 路（API Key）：本 Key 累计已用。
-    // 站点上这两个"已用"能同时读到（ur：$526.66 vs $479.44），合并后悬停里两个都列出来。
+    // 站点上这两个"已用"能同时读到（账号口径 $526.66 vs 本 Key 口径 $479.44），合并后悬停里两个都列出来。
     var accountValue = await readAccountBalance(facts)
     var keyValue = await readKeyValue(facts)
     var outcome = mergeOutcomes(provider, facts.kind, accountValue, keyValue)

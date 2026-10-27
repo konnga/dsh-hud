@@ -1,7 +1,7 @@
 /**
  * 「给中转站配后台凭据」那条交互路径的用例。
  *
- * 这一组守的是**用户报过的那件事**：ur 的账号余额明明后台看得见，胶囊却只报"已用"。
+ * 这一组守的是**用户报过的那件事**：某中转站的账号余额明明后台看得见，胶囊却只报"已用"。
  * 根因是那枚数只对后台凭据可见，而原来的配法是让用户手改
  * `~/.dsh/.credentials.yaml` —— 那不算交互，那算把人挡在门外。
  *
@@ -50,10 +50,10 @@ const t = translator()
 function ledgerWithoutToken(overrides = {}) {
   return {
     mode: 'provider',
-    provider: 'ur',
+    provider: 'relay-a',
     reason: null,
     balance: {
-      provider: 'ur',
+      provider: 'relay-a',
       kind: 'relay',
       currency: 'USD',
       remaining: null,
@@ -65,7 +65,7 @@ function ledgerWithoutToken(overrides = {}) {
       bonus: [],
       at: Date.now(),
     },
-    token: { ref: 'UR_ACCESS_TOKEN', configured: false },
+    token: { ref: 'RELAY_A_ACCESS_TOKEN', configured: false },
     ...overrides,
   }
 }
@@ -87,13 +87,17 @@ test('点胶囊：宿主说"这个站没配后台令牌" → 弹设置面板（�
     },
   })
   findByAttr(withMethods, 'balance-pill').props.onClick()
-  assert.deepEqual(opened, [{ provider: 'ur', ref: 'UR_ACCESS_TOKEN' }], '应当只弹面板，不刷新')
+  assert.deepEqual(
+    opened,
+    [{ provider: 'relay-a', ref: 'RELAY_A_ACCESS_TOKEN' }],
+    '应当只弹面板，不刷新',
+  )
 })
 
 test('点胶囊：令牌已配 → 刷新一次读数（跳过宿主缓存）', () => {
   const calls = []
   const node = renderProviderPill(
-    ledgerWithoutToken({ token: { ref: 'UR_ACCESS_TOKEN', configured: true } }),
+    ledgerWithoutToken({ token: { ref: 'RELAY_A_ACCESS_TOKEN', configured: true } }),
     {
       t,
       methods: {
@@ -119,15 +123,15 @@ test('点胶囊：宿主没给 token 状态（老宿主）→ 退回"刷新"，�
   assert.deepEqual(calls, [{ refresh: true }], '不知道状态时只刷新，不擅自弹面板')
 })
 
-test('点 `ur —`（读不到余额）：同样能弹面板 —— 那正是"没配令牌"时的样子', () => {
+test('点 `站名 --`（读不到余额）：同样能弹面板 —— 那正是"没配令牌"时的样子', () => {
   const opened = []
   const node = renderProviderPill(
     {
       mode: 'unavailable',
-      provider: 'ur',
+      provider: 'relay-a',
       reason: 'unsupported',
       balance: null,
-      token: { ref: 'UR_ACCESS_TOKEN', configured: false },
+      token: { ref: 'RELAY_A_ACCESS_TOKEN', configured: false },
     },
     {
       t,
@@ -138,7 +142,7 @@ test('点 `ur —`（读不到余额）：同样能弹面板 —— 那正是"�
     },
   )
   findByAttr(node, 'balance-pill').props.onClick()
-  assert.deepEqual(opened, [{ provider: 'ur', ref: 'UR_ACCESS_TOKEN' }])
+  assert.deepEqual(opened, [{ provider: 'relay-a', ref: 'RELAY_A_ACCESS_TOKEN' }])
 })
 
 /* -------------------------------------------------------------- 面板本体 */
@@ -153,8 +157,8 @@ test('面板：开着时给出输入框、保存、取消，并把引用名亮�
     {
       tokenPanel: {
         open: true,
-        provider: 'ur',
-        ref: 'UR_ACCESS_TOKEN',
+        provider: 'relay-a',
+        ref: 'RELAY_A_ACCESS_TOKEN',
         supported: true,
         saving: false,
         error: null,
@@ -166,17 +170,17 @@ test('面板：开着时给出输入框、保存、取消，并把引用名亮�
   assert.ok(input, '要有输入框')
   assert.equal(input.props.type, 'password', '令牌不能明文回显在屏幕上')
   const text = textOf(node)
-  // 屏上只留一句话：它会不会往外传。用户问过"UR_ACCESS_TOKEN 是什么"、
+  // 屏上只留一句话：它会不会往外传。用户问过"RELAY_A_ACCESS_TOKEN 是什么"、
   // 也问过一次"换个站是不是就换个变量名"——两轮之后结论是：别在屏幕上摆变量名。
   assert.equal(text.includes('只存储于本地'), true, `要点明只落本地，实际 ${text}`)
   assert.equal(
-    text.includes('UR_ACCESS_TOKEN'),
+    text.includes('RELAY_A_ACCESS_TOKEN'),
     false,
     `变量名不该出现在可见文案里（挪进 title 了），实际 ${text}`,
   )
   // 但排查时还得能找到它：引用名在 `title` 上，鼠标一停就能看见。
   const ref = findByAttr(node, 'token-ref')
-  assert.equal(ref.props.title, 'ur · UR_ACCESS_TOKEN', '引用名降级成 title 锚点')
+  assert.equal(ref.props.title, 'relay-a · RELAY_A_ACCESS_TOKEN', '引用名降级成 title 锚点')
   assert.ok(findByAttr(node, 'token-save'), '要有保存')
   assert.ok(findByAttr(node, 'token-cancel'), '要有取消')
 })
@@ -186,8 +190,8 @@ test('面板：输入框是 password，且空的时候保存按钮不可点（�
     {
       tokenPanel: {
         open: true,
-        provider: 'ur',
-        ref: 'UR_ACCESS_TOKEN',
+        provider: 'relay-a',
+        ref: 'RELAY_A_ACCESS_TOKEN',
         supported: true,
         saving: false,
         error: null,
@@ -204,8 +208,8 @@ test('面板：保存中时按钮禁用并显示"保存中…"（避免连点存
     {
       tokenPanel: {
         open: true,
-        provider: 'ur',
-        ref: 'UR_ACCESS_TOKEN',
+        provider: 'relay-a',
+        ref: 'RELAY_A_ACCESS_TOKEN',
         supported: true,
         saving: true,
         error: null,
@@ -224,8 +228,8 @@ test('面板：保存失败时把原因翻成人话（每个 reason 都得有词
       {
         tokenPanel: {
           open: true,
-          provider: 'ur',
-          ref: 'UR_ACCESS_TOKEN',
+          provider: 'relay-a',
+          ref: 'RELAY_A_ACCESS_TOKEN',
           supported: true,
           saving: false,
           error: reason,
@@ -248,8 +252,8 @@ test('面板：取消按钮收起面板（不退化成"关不掉"）', () => {
     {
       tokenPanel: {
         open: true,
-        provider: 'ur',
-        ref: 'UR_ACCESS_TOKEN',
+        provider: 'relay-a',
+        ref: 'RELAY_A_ACCESS_TOKEN',
         supported: true,
         saving: false,
         error: null,
@@ -267,8 +271,8 @@ test('面板：`⌘V` 之后按 Enter 就存（粘贴是唯一的主路径，不
     {
       tokenPanel: {
         open: true,
-        provider: 'ur',
-        ref: 'UR_ACCESS_TOKEN',
+        provider: 'relay-a',
+        ref: 'RELAY_A_ACCESS_TOKEN',
         supported: true,
         saving: false,
         error: null,
@@ -293,8 +297,8 @@ test('面板：`⌘V` 之后按 Enter 就存（粘贴是唯一的主路径，不
       {
         tokenPanel: {
           open: true,
-          provider: 'ur',
-          ref: 'UR_ACCESS_TOKEN',
+          provider: 'relay-a',
+          ref: 'RELAY_A_ACCESS_TOKEN',
           supported: true,
           saving: false,
           error: null,
@@ -320,8 +324,8 @@ test('面板：文案不能把人引向"手改配置文件"（那正是这个功
     {
       tokenPanel: {
         open: true,
-        provider: 'ur',
-        ref: 'UR_ACCESS_TOKEN',
+        provider: 'relay-a',
+        ref: 'RELAY_A_ACCESS_TOKEN',
         supported: true,
         saving: false,
         error: null,
@@ -337,9 +341,9 @@ test('面板：文案不能把人引向"手改配置文件"（那正是这个功
 
 test('面板：换一个站，可见文案不变，只有 title 里的引用名跟着换', () => {
   for (const [provider, ref] of [
-    ['ur', 'UR_ACCESS_TOKEN'],
-    ['muyuan', 'MUYUAN_ACCESS_TOKEN'],
-    ['happycoding', 'HAPPYCODING_ACCESS_TOKEN'],
+    ['relay-a', 'RELAY_A_ACCESS_TOKEN'],
+    ['relay-b', 'RELAY_B_ACCESS_TOKEN'],
+    ['relay-c', 'RELAY_C_ACCESS_TOKEN'],
   ]) {
     const node = renderTokenPanel(
       {
@@ -366,8 +370,8 @@ test('面板：保存按钮在最右边（取消在左、保存在右，主操�
     {
       tokenPanel: {
         open: true,
-        provider: 'ur',
-        ref: 'UR_ACCESS_TOKEN',
+        provider: 'relay-a',
+        ref: 'RELAY_A_ACCESS_TOKEN',
         supported: true,
         saving: false,
         error: null,
@@ -412,7 +416,7 @@ test('全链路（真 store）：点胶囊 → 面板带出站名 → 保存时�
           value: {
             available: true,
             balance: {
-              provider: 'ur',
+              provider: 'relay-a',
               kind: 'relay',
               currency: 'USD',
               remaining: null,
@@ -423,12 +427,12 @@ test('全链路（真 store）：点胶囊 → 面板带出站名 → 保存时�
               bonus: [],
               at: 1_700_000_000_000,
             },
-            token: { ref: 'UR_ACCESS_TOKEN', configured: false },
+            token: { ref: 'RELAY_A_ACCESS_TOKEN', configured: false },
           },
         })
       }
       if (method === 'provider-credential') {
-        return Promise.resolve({ ok: true, value: { saved: true, ref: 'UR_ACCESS_TOKEN' } })
+        return Promise.resolve({ ok: true, value: { saved: true, ref: 'RELAY_A_ACCESS_TOKEN' } })
       }
       return Promise.resolve({ ok: true, value: null })
     },
@@ -447,14 +451,14 @@ test('全链路（真 store）：点胶囊 → 面板带出站名 → 保存时�
 
   const opened = store.getSnapshot().tokenPanel
   assert.equal(opened.open, true, '点一下就该弹面板')
-  assert.equal(opened.provider, 'ur', '面板必须知道是哪个站（这里曾经是 null）')
-  assert.equal(opened.ref, 'UR_ACCESS_TOKEN')
+  assert.equal(opened.provider, 'relay-a', '面板必须知道是哪个站（这里曾经是 null）')
+  assert.equal(opened.ref, 'RELAY_A_ACCESS_TOKEN')
 
   // 2) 存：真的把 provider + token 发出去。
   assert.equal(await store.saveProviderToken('sk-dashboard-token'), true)
   const credential = calls.find((call) => call.method === 'provider-credential')
   assert.ok(credential, '必须真的发出写入请求')
-  assert.deepEqual(credential.args, { provider: 'ur', token: 'sk-dashboard-token' })
+  assert.deepEqual(credential.args, { provider: 'relay-a', token: 'sk-dashboard-token' })
 
   // 3) 存成功 → 面板关掉。
   assert.equal(store.getSnapshot().tokenPanel.open, false)

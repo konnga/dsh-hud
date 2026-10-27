@@ -399,7 +399,7 @@ export interface HudProviderBalance {
    * **整个账号**的累计已用（`/api/user/self` 的 `used_quota`）。
    *
    * 与 `usedKey` 分开两个字段，不是靠一个 `scope` 标记：站点上这两个数**能同时拿到**
-   * （实测 ur：账号 $526.66 / 本 Key $479.44），也**能差出一大截**。
+   * （实测：账号 $526.66 / 本 Key $479.44），也**能差出一大截**。
    * 塞进一个字段就必须二选一，那等于主动丢掉一个真实读数。
    */
   usedAccount: string | null
@@ -437,10 +437,10 @@ export interface HudProviderFacts {
   provider: string
   kind: 'official' | 'relay'
   baseURL: string
-  /** 凭据引用名（`MUYUAN_API_KEY` 这种），值由凭据服务解析。 */
+  /** 凭据引用名（`<前缀>_API_KEY` 这种），值由凭据服务解析。 */
   apiKeyEnv: string
   /**
-   * 后台（dashboard）凭据的引用名（`UR_API_KEY` → `UR_ACCESS_TOKEN`）。
+   * 后台（dashboard）凭据的引用名（`SITE_API_KEY` → `SITE_ACCESS_TOKEN`）。
    *
    * 为什么需要：new-api 把**账号余额**放在挂了 `UserAuth()` 的 `/api/user/self` 里，
    * `sk-` API Key 走的是另一套 `TokenAuth`，读不到（只能读用量）。
@@ -452,7 +452,7 @@ export interface HudProviderFacts {
    */
   accessTokenEnv?: string | null
   /**
-   * `New-Api-User` 头的值来自哪枚凭据（`UR_USER_ID`）。
+   * `New-Api-User` 头的值来自哪枚凭据（`SITE_USER_ID`）。
    *
    * 只有老版本 / 部分 fork 才校验这个头；new-api 主线里没有这个头，配了也无害。
    */

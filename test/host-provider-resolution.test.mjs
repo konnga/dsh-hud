@@ -48,14 +48,14 @@ const settings = {
         ns: 'llm-pi-ai',
         value: {
           providers: {
-            muyuan: {
-              baseURL: 'https://muyuan.do/v1',
-              apiKeyEnv: 'MUYUAN_API_KEY',
+            'relay-b': {
+              baseURL: 'https://relay-b.example/v1',
+              apiKeyEnv: 'RELAY_B_API_KEY',
               api: 'openai-completions',
             },
-            relay404: {
-              baseURL: 'https://api.404-found.uk/v1',
-              apiKeyEnv: 'API404_API_KEY',
+            'relay-y': {
+              baseURL: 'https://relay-x.example/v1',
+              apiKeyEnv: 'RELAY_X_API_KEY',
               api: 'openai-completions',
             },
           },
@@ -65,9 +65,9 @@ const settings = {
   },
 }
 
-/** 假凭据：`API404_API_KEY` 故意不给，用来走 no-key；令牌按需加上。 */
+/** 假凭据：`RELAY_X_API_KEY` 故意不给，用来走 no-key；令牌按需加上。 */
 function credentialsWith(extra = {}) {
-  const refs = { MUYUAN_API_KEY: 'sk-muyuan', ...extra }
+  const refs = { RELAY_B_API_KEY: 'sk-fixture-b', ...extra }
   return {
     resolve(ref) {
       return Promise.resolve(
@@ -155,14 +155,14 @@ test('定位：`pending`（刚在菜单里选的新来源）优先于 `lastUsed`
       s1: {
         lastUsed: { provider: 'deepseek-account', model: 'deepseek-v4.1-flash' },
         // 用户刚把来源换成中转站、还没发消息：只有 pending 知道这件事。
-        pending: { provider: 'muyuan', model: 'deepseek-v4.1-flash' },
+        pending: { provider: 'relay-b', model: 'deepseek-v4.1-flash' },
       },
     },
   })
   try {
     const outcome = await reader('s1')
     assert.equal(outcome.ok, true)
-    assert.equal(outcome.value.provider, 'muyuan', '必须跟着 pending 走，而不是 lastUsed 的账号')
+    assert.equal(outcome.value.provider, 'relay-b', '必须跟着 pending 走，而不是 lastUsed 的账号')
     assert.equal(outcome.value.remaining, '2265.33')
     assert.equal(net.calls.length, 2, '一次订阅 + 一次用量')
   } finally {
@@ -176,14 +176,14 @@ test('定位：`pending` 为 null 时用 `lastUsed`；两个都空 → no-provid
   const { reader, stop } = withReader({
     sessions: { a, b },
     states: {
-      a: { lastUsed: { provider: 'muyuan', model: 'm' }, pending: null },
+      a: { lastUsed: { provider: 'relay-b', model: 'm' }, pending: null },
       b: { lastUsed: null, pending: null },
     },
   })
   try {
     const first = await reader('a')
     assert.equal(first.ok, true)
-    assert.equal(first.value.provider, 'muyuan')
+    assert.equal(first.value.provider, 'relay-b')
 
     const second = await reader('b')
     assert.equal(second.ok, false)
@@ -215,7 +215,7 @@ test('定位：会话不存在 / 没配密钥 / 提供方不在设置里，都�
   const { reader, net, stop } = withReader({
     sessions: { nokey: missingKey, unknown },
     states: {
-      nokey: { lastUsed: { provider: 'relay404', model: 'm' }, pending: null },
+      nokey: { lastUsed: { provider: 'relay-y', model: 'm' }, pending: null },
       unknown: { lastUsed: { provider: 'nope', model: 'm' }, pending: null },
     },
   })
@@ -227,7 +227,7 @@ test('定位：会话不存在 / 没配密钥 / 提供方不在设置里，都�
     const withoutKey = await reader('nokey')
     assert.equal(withoutKey.ok, false)
     assert.equal(withoutKey.failure.reason, 'no-key')
-    assert.equal(withoutKey.failure.provider, 'relay404')
+    assert.equal(withoutKey.failure.provider, 'relay-y')
     assert.equal(withoutKey.failure.kind, 'relay')
 
     const nowhere = await reader('unknown')
@@ -245,7 +245,7 @@ test('定位：同一个提供方一分钟内只取一次（轮询不该变成�
   let now = 1_000
   const { reader, net, stop } = withReader({
     sessions: { s1: session },
-    states: { s1: { lastUsed: { provider: 'muyuan', model: 'm' }, pending: null } },
+    states: { s1: { lastUsed: { provider: 'relay-b', model: 'm' }, pending: null } },
     now: () => now,
   })
   try {
@@ -281,7 +281,7 @@ test('定位：会话查找先走 `get(id)`，没有这个方法时退回 `list(
 
 /* ---------------------------------- 账号余额优先、用量兜底 */
 
-const UR_STATUS = {
+const RELAY_A_STATUS = {
   data: { quota_per_unit: 500000, quota_display_type: 'USD', usd_exchange_rate: 6.67 },
 }
 
@@ -289,11 +289,11 @@ test('编排：配了后台令牌 → 账号余额 + 本 Key 已用**两本账�
   const session = sessionWith('s1')
   const { reader, net, stop } = withReader({
     sessions: { s1: session },
-    states: { s1: { lastUsed: { provider: 'muyuan', model: 'm' }, pending: null } },
-    credentials: credentialsWith({ MUYUAN_ACCESS_TOKEN: 'web-token', MUYUAN_USER_ID: '936' }),
+    states: { s1: { lastUsed: { provider: 'relay-b', model: 'm' }, pending: null } },
+    credentials: credentialsWith({ RELAY_B_ACCESS_TOKEN: 'web-token', RELAY_B_USER_ID: '936' }),
     routes: { subscription: { hard_limit_usd: 100000000 }, usage: { total_usage: 47944.125 } },
     bodies: {
-      status: UR_STATUS,
+      status: RELAY_A_STATUS,
       self: {
         success: true,
         data: { quota: 427845000, used_quota: 263330000, request_count: 3685 },
@@ -334,11 +334,11 @@ test('编排：令牌失效 → 安静退回用量那一路（胶囊不该整枚
   const session = sessionWith('s1')
   const { reader, net, stop } = withReader({
     sessions: { s1: session },
-    states: { s1: { lastUsed: { provider: 'muyuan', model: 'm' }, pending: null } },
-    credentials: credentialsWith({ MUYUAN_ACCESS_TOKEN: 'expired-token' }),
+    states: { s1: { lastUsed: { provider: 'relay-b', model: 'm' }, pending: null } },
+    credentials: credentialsWith({ RELAY_B_ACCESS_TOKEN: 'expired-token' }),
     routes: { subscription: { hard_limit_usd: 2265.33 }, usage: { total_usage: 21274.26 } },
     // /api/status 通，但 /api/user/self 401（令牌过期就是这个形状）。
-    bodies: { status: UR_STATUS, self: 'deny' },
+    bodies: { status: RELAY_A_STATUS, self: 'deny' },
   })
   try {
     const outcome = await reader('s1')
@@ -352,7 +352,7 @@ test('编排：令牌失效 → 安静退回用量那一路（胶囊不该整枚
       [
         '/api/status',
         '/api/user/self',
-        // baseURL 是 `https://muyuan.do/v1`，所以这两条在 `/v1` 下面。
+        // baseURL 是 `https://relay-b.example/v1`，所以这两条在 `/v1` 下面。
         '/v1/dashboard/billing/subscription',
         '/v1/dashboard/billing/usage',
       ],
@@ -366,7 +366,7 @@ test('编排：没配令牌就是原来的行为（不额外打 status / user/se
   const session = sessionWith('s1')
   const { reader, net, stop } = withReader({
     sessions: { s1: session },
-    states: { s1: { lastUsed: { provider: 'muyuan', model: 'm' }, pending: null } },
+    states: { s1: { lastUsed: { provider: 'relay-b', model: 'm' }, pending: null } },
   })
   try {
     const outcome = await reader('s1')

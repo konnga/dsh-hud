@@ -198,7 +198,7 @@ export function apply(ctx: HudPluginContext): void {
   }, 'dsh-hud: provider balance poll')
 
   // 换模型 = 换账本：TTL 按时钟算、不按事实算，所以模型一变就得主动重取一次
-  // （否则切到 `ur` 之后会先盯着平台账号的 `¥8.60` 看满一分钟）。
+  // （否则切到中转站之后会先盯着平台账号的 `¥8.60` 看满一分钟）。
   ctx.effect(function () {
     return watchModelSelection(ctx, store)
   }, 'dsh-hud: model selection -> provider balance')
