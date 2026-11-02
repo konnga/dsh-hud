@@ -335,7 +335,4 @@ export const CSS = [
   // 「用时」压暗一档：它是背景信息，别跟正在变的那句话抢注意力。
   '.dshh-runTime{opacity:.55;font-size:.92em;white-space:nowrap;}',
   '.dshh-runTime:empty{display:none;}',
-  '.dshh-runPhrase.dshh-fade{animation:dshh-fadeIn .45s ease;}',
-  '@keyframes dshh-fadeIn{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:none}}',
-  '@media (prefers-reduced-motion:reduce){.dshh-runPhrase.dshh-fade{animation:none}}',
 ].join('')

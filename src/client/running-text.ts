@@ -60,6 +60,8 @@ var phraseEl: HTMLElement | null = null
 var timeEl: HTMLElement | null = null
 var imageEl: HTMLImageElement | null = null
 var imageAction: WhaleAction | null = null
+var pendingImage: HTMLImageElement | null = null
+var pendingPhrase = ''
 var activeSkin: RunningSkinId | null = null
 var motionQuery: MediaQueryList | null = null
 /** 上一拍看到的那个 `[data-chat-running]`：换了就说明是新的一轮，从第一句重来。 */
@@ -137,15 +139,9 @@ export function extractElapsed(text: string): string {
   return head.slice(start).trim()
 }
 
-/** 写一句上去，并让淡入动画重跑一次（摘类 → 强制回流 → 挂类）。 */
+/** 直接更新文字，不清空、不重放透明度动画，也不强制回流。 */
 function show(phrase: string): void {
-  if (phraseEl === null) return
-  if (phraseEl.textContent === phrase) return
-  phraseEl.textContent = phrase
-  phraseEl.classList.remove('dshh-fade')
-  // 不读一次布局，浏览器会把「摘掉再挂上」合并成没变化，动画不会重跑。
-  void phraseEl.offsetWidth
-  phraseEl.classList.add('dshh-fade')
+  if (phraseEl !== null && phraseEl.textContent !== phrase) phraseEl.textContent = phrase
 }
 
 /** 把我们的 span 挂进 `.runningContent`（末尾），返回它。 */
@@ -176,6 +172,12 @@ function mountInto(content: Element): HTMLElement {
     image.setAttribute('draggable', 'false')
     image.hidden = true
     span.appendChild(image)
+    image.onerror = function () {
+      // 只在屏幕上的图片真的失败时回退；候选图加载期间不切回官方图标。
+      if (imageEl !== image) return
+      image.hidden = true
+      if (lastRoot !== null) lastRoot.removeAttribute('data-dsh-hud-running-whale')
+    }
     imageEl = image
   } else {
     // 轮播文案皮肤维持原来的一行布局。
@@ -189,29 +191,71 @@ function mountInto(content: Element): HTMLElement {
   return span
 }
 
-/** 图片完成解码后才隐藏官方图标；加载失败仍保留官方图标和准确文案。 */
+function cancelPendingImage(): void {
+  if (pendingImage !== null) {
+    pendingImage.onload = null
+    pendingImage.onerror = null
+  }
+  pendingImage = null
+}
+
+/** 界面外准备新图，解码完成后同拍更新图片与文案，期间保留上一张图。 */
 function syncAction(root: Element): void {
   var action = RUNNING_CUES[group][index].action
-  if (node !== null) node.setAttribute('data-action', action)
-  if (imageEl === null || imageAction === action) return
+  var phrase = phraseAt()
+  if (imageEl === null) {
+    if (node !== null) node.setAttribute('data-action', action)
+    show(phrase)
+    return
+  }
+  pendingPhrase = phrase
+  if (imageAction === action) {
+    if (pendingImage === null) show(phrase)
+    return
+  }
+  cancelPendingImage()
   imageAction = action
   var image = imageEl
-  image.hidden = true
-  root.removeAttribute('data-dsh-hud-running-whale')
-  image.setAttribute('data-action', action)
-  var loaded = function () {
-    if (lastRoot !== root || imageEl !== image || imageAction !== action) return
+  var candidate = document.createElement('img')
+  pendingImage = candidate
+
+  function isCurrent(): boolean {
+    return lastRoot === root && imageEl === image && pendingImage === candidate
+  }
+  function commit(): void {
+    if (!isCurrent()) return
+    cancelPendingImage()
+    image.src = WHALE_ASSETS[action]
+    image.setAttribute('data-action', action)
     image.hidden = false
+    if (node !== null) node.setAttribute('data-action', action)
+    show(pendingPhrase)
     root.setAttribute('data-dsh-hud-running-whale', '')
   }
-  image.onload = loaded
-  image.onerror = function () {
-    if (lastRoot !== root || imageEl !== image || imageAction !== action) return
-    image.hidden = true
-    root.removeAttribute('data-dsh-hud-running-whale')
+  function failed(): void {
+    if (!isCurrent()) return
+    cancelPendingImage()
+    // 首张失败保留官方图标；后续失败保留最后一张成功图片，避免闪回。
+    show(pendingPhrase)
   }
-  image.src = WHALE_ASSETS[action]
-  if (image.complete && image.naturalWidth > 0) loaded()
+  function loaded(): void {
+    if (!isCurrent()) return
+    candidate.onload = null
+    if (typeof candidate.decode === 'function') {
+      try {
+        candidate.decode().then(commit, failed)
+      } catch (error) {
+        failed()
+      }
+    } else {
+      // 旧 WebView 没有 decode 时，至少等待图片 load 成功再换图。
+      commit()
+    }
+  }
+  candidate.onload = loaded
+  candidate.onerror = failed
+  candidate.src = WHALE_ASSETS[action]
+  if (candidate.complete && candidate.naturalWidth > 0) loaded()
 }
 
 /** 把官方那行里的「用时」抄到我们这一行。 */
@@ -219,7 +263,8 @@ function syncTime(root: Element): boolean {
   if (timeEl === null) return false
   var source = root.querySelector('[data-shimmer-text]')
   if (source === null) return false
-  timeEl.textContent = extractElapsed(source.getAttribute('data-shimmer-text') || '')
+  var elapsed = extractElapsed(source.getAttribute('data-shimmer-text') || '')
+  if (timeEl.textContent !== elapsed) timeEl.textContent = elapsed
   return true
 }
 
@@ -233,6 +278,8 @@ function unmount(): void {
     imageEl.onload = null
     imageEl.onerror = null
   }
+  cancelPendingImage()
+  pendingPhrase = ''
   imageEl = null
   imageAction = null
   if (node !== null && node.parentNode !== null) node.parentNode.removeChild(node)
@@ -287,7 +334,6 @@ function tick(): void {
       lastRotate = now
       index = (index + 1) % RUNNING_CUES[group].length
     }
-    show(phraseAt())
     syncAction(root)
     // 最后才隐藏官方文字：挂载、计时和语言读取都已成功。
     root.setAttribute('data-dsh-hud-running-text', '')

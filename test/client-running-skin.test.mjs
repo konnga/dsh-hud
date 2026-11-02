@@ -140,13 +140,14 @@ test('选「官方」是把整张表撤掉，而不是注入一段空 CSS', () =
 })
 
 /** 最小 DOM 树：测试真实的挂载、标记、移除路径，而不只看定时器有没有注册。 */
-function runningDom(mounted) {
+function runningDom(mounted, options = {}) {
+  const images = []
   function element(tagName) {
-    return {
+    const item = {
       tagName,
       hidden: false,
-      complete: false,
-      naturalWidth: 0,
+      complete: tagName === 'img' && !options.manualLoad,
+      naturalWidth: tagName === 'img' && !options.manualLoad ? 112 : 0,
       attributes: {},
       className: '',
       textContent: '',
@@ -176,6 +177,11 @@ function runningDom(mounted) {
         return child
       },
     }
+    if (tagName === 'img') {
+      if (options.decode) item.decode = () => options.decode(item)
+      images.push(item)
+    }
+    return item
   }
   const roots = []
   mounted.documentStub.createElement = element
@@ -209,7 +215,10 @@ function runningDom(mounted) {
   const marked = (item) => item.getAttribute('data-dsh-hud-running-text') !== null
   const image = (item) =>
     item.content.children[0]?.children.find((child) => child.tagName === 'img')
-  return { roots, root, tick, phrase, time, marked, image }
+  const candidate = () =>
+    images.findLast((item) => item.onload !== null && typeof item.onload === 'function')
+  const load = () => candidate()?.onload()
+  return { roots, root, tick, phrase, time, marked, image, candidate, load, images }
 }
 
 const storageKey = 'dsh-hud:running-skin'
@@ -479,7 +488,7 @@ test('工具分组跟随 store 的当前工具，同组轮播与换组复位都�
 
 test('鲸鱼娘是可选皮肤：真彩色 img，加载后才替换官方图标', () => {
   const mounted = mountClient()
-  const dom = runningDom(mounted)
+  const dom = runningDom(mounted, { manualLoad: true })
   const root = dom.root()
   cubes(mounted)[4].props.onClick()
   assert.equal(mounted.windowStub.localStorage.getItem(storageKey), 'whale')
@@ -490,13 +499,13 @@ test('鲸鱼娘是可选皮肤：真彩色 img，加载后才替换官方图标'
   assert.ok(css.includes('prefers-reduced-motion'))
   assert.equal(dom.marked(root), true)
   const image = dom.image(root)
-  assert.equal(image.getAttribute('data-action'), 'thinking')
-  assert.match(image.src, /^data:image\/webp;base64,/)
+  assert.match(dom.candidate().src, /^data:image\/webp;base64,/)
+  assert.equal(image.src, undefined, '候选图片未就绪前不替换可见图标')
   assert.equal(image.getAttribute('aria-hidden'), 'true')
   assert.equal(image.alt, '')
   assert.equal(image.hidden, true)
   assert.equal(root.getAttribute('data-dsh-hud-running-whale'), null)
-  image.onload()
+  dom.load()
   assert.equal(image.hidden, false)
   assert.equal(root.getAttribute('data-dsh-hud-running-whale'), '')
   assert.equal(dom.phrase(root), '深度求索中')
@@ -572,7 +581,7 @@ test('文案轮播与动作同拍：换工具立即复位；切语言不改变�
       // No timer tick: store publication should refresh the pose immediately.
       assert.equal(dom.phrase(root), phrase)
       assert.equal(dom.image(root).getAttribute('data-action'), action)
-      dom.image(root).onload()
+      dom.load()
       assert.equal(root.getAttribute('data-dsh-hud-running-whale'), '')
     }
     dom.image(root).onerror()
@@ -663,22 +672,23 @@ test('完整轮播能访问所有动作素材，减弱动态冻结当前组但�
 
 test('鲸鱼娘：多会话、换皮与新轮次都清理图片，过期加载回调不能接管旧行', () => {
   const mounted = mountClient()
-  const dom = runningDom(mounted)
+  const dom = runningDom(mounted, { manualLoad: true })
   const root = dom.root()
   cubes(mounted)[4].props.onClick()
   const image = dom.image(root)
-  const lateLoad = image.onload
+  const candidate = dom.candidate()
+  const lateLoad = candidate.onload
   dom.root()
   dom.tick()
   lateLoad()
   assert.equal(dom.marked(root), false)
   assert.equal(root.getAttribute('data-dsh-hud-running-whale'), null)
-  assert.equal(image.onload, null)
+  assert.equal(candidate.onload, null)
   assert.equal(root.content.children.length, 0)
   dom.roots.pop()
   dom.tick()
+  dom.load()
   assert.equal(dom.image(root).getAttribute('data-action'), 'thinking')
-  dom.image(root).onload()
   cubes(mounted)[3].props.onClick()
   assert.equal(dom.image(root), undefined)
   assert.equal(root.getAttribute('data-dsh-hud-running-whale'), null)
@@ -834,4 +844,322 @@ test('鲸鱼娘两行布局：上方用时、下方文案，图片在左，切�
   )
   assert.ok(!skinTag(mounted).textContent.includes('.dshh-runCopy'))
   mounted.dispose()
+})
+
+function deferredDecode() {
+  let resolve
+  let reject
+  const promise = new Promise((yes, no) => {
+    resolve = yes
+    reject = no
+  })
+  return { promise, resolve, reject }
+}
+
+test('切换动作先在界面外解码：旧图和旧文案保持可见，用时仍更新，准备好后一起替换', async () => {
+  const mounted = mountClient()
+  const decoding = []
+  const dom = runningDom(mounted, {
+    manualLoad: true,
+    decode: () => {
+      const request = deferredDecode()
+      decoding.push(request)
+      return request.promise
+    },
+  })
+  const root = dom.root()
+  const originalNow = Date.now
+  let clock = 1000
+  Date.now = () => clock
+  try {
+    dom.tick()
+    const image = dom.image(root)
+    const text = root.content.children[0]
+    const copy = text.children.find((child) => child.className === 'dshh-runCopy')
+    const phrase = copy.children[1]
+    Object.defineProperty(phrase, 'offsetWidth', {
+      get() {
+        throw new Error('文案切换不能强制读取布局')
+      },
+    })
+    dom.load()
+    assert.equal(decoding.length, 1)
+    assert.equal(image.hidden, true, '首次解码期间保留官方图标')
+    decoding[0].resolve()
+    await Promise.resolve()
+    const oldSrc = image.src
+    assert.equal(image.getAttribute('data-action'), 'thinking')
+    assert.equal(image.hidden, false)
+    assert.equal(root.getAttribute('data-dsh-hud-running-whale'), '')
+    let hidden = false
+    const hiddenWrites = []
+    Object.defineProperty(image, 'hidden', {
+      get() {
+        return hidden
+      },
+      set(value) {
+        hiddenWrites.push(value)
+        hidden = value
+      },
+    })
+    const removals = []
+    const removeAttribute = root.removeAttribute
+    root.removeAttribute = function (key) {
+      removals.push(key)
+      removeAttribute.call(this, key)
+    }
+
+    clock += 3200
+    dom.tick()
+    const next = dom.candidate()
+    assert.ok(next)
+    assert.equal(next.parentNode, null, '候选图片不能挂到可见 DOM')
+    assert.notEqual(next.src, oldSrc)
+    assert.equal(image.src, oldSrc)
+    assert.equal(image.getAttribute('data-action'), 'thinking')
+    assert.equal(dom.phrase(root), '深度求索中')
+    root.source.setAttribute('data-shimmer-text', '深度求索中，用时 1 分 2 秒 ···')
+    dom.tick()
+    assert.equal(dom.time(root), '1 分 2 秒', '不能为等待图片而暂停用时')
+    dom.load()
+    assert.equal(image.src, oldSrc, 'load 完成还不够，必须等待 decode')
+    assert.equal(dom.phrase(root), '深度求索中')
+    assert.equal(image.hidden, false)
+    assert.equal(root.getAttribute('data-dsh-hud-running-whale'), '')
+    decoding[1].resolve()
+    await Promise.resolve()
+    assert.equal(image.src, next.src)
+    assert.equal(image.getAttribute('data-action'), 'context')
+    assert.equal(dom.phrase(root), '正在翻上下文')
+    assert.equal(root.content.children[0], text, '不能重建状态行')
+    assert.equal(text.children[0], copy, '不能重建文字列')
+    assert.ok(!hiddenWrites.includes(true), '不得隐藏旧图片造成空白闪烁')
+    assert.ok(!removals.includes('data-dsh-hud-running-whale'), '不得闪回官方图标')
+    assert.ok(!skinTag(mounted).textContent.includes('whale-settle'))
+    assert.ok(skinTag(mounted).textContent.includes('min-height:56px'))
+    assert.ok(!mounted.styles.some((tag) => tag.textContent.includes('.dshh-runPhrase.dshh-fade')))
+  } finally {
+    Date.now = originalNow
+    mounted.dispose()
+  }
+})
+
+test('新图加载或解码失败保留上一张成功图，不隐藏、不闪回官方，文案继续更新', async () => {
+  const mounted = mountClient()
+  const decoding = []
+  const dom = runningDom(mounted, {
+    manualLoad: true,
+    decode: () => {
+      const request = deferredDecode()
+      decoding.push(request)
+      return request.promise
+    },
+  })
+  const root = dom.root()
+  const originalNow = Date.now
+  let clock = 1000
+  Date.now = () => clock
+  try {
+    dom.tick()
+    dom.load()
+    decoding[0].resolve()
+    await Promise.resolve()
+    const image = dom.image(root)
+    const oldSrc = image.src
+    clock += 3200
+    dom.tick()
+    dom.candidate().onerror()
+    assert.equal(image.src, oldSrc)
+    assert.equal(image.hidden, false)
+    assert.equal(root.getAttribute('data-dsh-hud-running-whale'), '')
+    assert.equal(dom.phrase(root), '正在翻上下文')
+    clock += 3200
+    dom.tick()
+    dom.load()
+    decoding[1].reject(new Error('decode failed'))
+    await Promise.resolve()
+    assert.equal(image.src, oldSrc)
+    assert.equal(image.hidden, false)
+    assert.equal(root.getAttribute('data-dsh-hud-running-whale'), '')
+    assert.equal(dom.phrase(root), '把线索串起来')
+  } finally {
+    Date.now = originalNow
+    mounted.dispose()
+  }
+})
+
+test('快速换动作或结束轮次后，过期解码不能覆盖新图、文案或恢复旧状态行', async () => {
+  const mounted = mountClient()
+  const decoding = []
+  const dom = runningDom(mounted, {
+    manualLoad: true,
+    decode: () => {
+      const request = deferredDecode()
+      decoding.push(request)
+      return request.promise
+    },
+  })
+  const root = dom.root()
+  const originalNow = Date.now
+  let clock = 1000
+  Date.now = () => clock
+  try {
+    dom.tick()
+    dom.load()
+    decoding[0].resolve()
+    await Promise.resolve()
+    clock += 3200
+    dom.tick()
+    dom.load() // context 解码仍在后台。
+    clock += 3200
+    dom.tick()
+    dom.load() // connect 后来居上。
+    decoding[2].resolve()
+    await Promise.resolve()
+    assert.equal(dom.image(root).getAttribute('data-action'), 'connect')
+    assert.equal(dom.phrase(root), '把线索串起来')
+    decoding[1].resolve()
+    await Promise.resolve()
+    assert.equal(dom.image(root).getAttribute('data-action'), 'connect')
+    assert.equal(dom.phrase(root), '把线索串起来')
+    clock += 3200
+    dom.tick()
+    dom.load()
+    const oldImage = dom.image(root)
+    const oldSrc = oldImage.src
+    dom.roots.length = 0
+    dom.tick()
+    decoding[3].resolve()
+    await Promise.resolve()
+    assert.equal(oldImage.src, oldSrc)
+    assert.equal(root.content.children.length, 0)
+    assert.equal(root.getAttribute('data-dsh-hud-running-whale'), null)
+    assert.equal(dom.marked(root), false)
+  } finally {
+    Date.now = originalNow
+    mounted.dispose()
+  }
+})
+
+test('等待解码时切换语言，提交使用最新文案，不重新加载相同动作', async () => {
+  let language = 'zh'
+  const listeners = new Set()
+  const mounted = mountClient({
+    locale: {
+      resolveText: (text) => text[language],
+      subscribe: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+    },
+  })
+  const decoded = deferredDecode()
+  const dom = runningDom(mounted, { manualLoad: true, decode: () => decoded.promise })
+  const root = dom.root()
+  dom.tick()
+  const count = dom.images.length
+  dom.load()
+  language = 'en'
+  for (const listener of listeners) listener()
+  assert.equal(dom.images.length, count, '同一动作不重复请求')
+  decoded.resolve()
+  await Promise.resolve()
+  assert.equal(dom.phrase(root), 'Deep diving')
+  assert.equal(dom.image(root).getAttribute('data-action'), 'thinking')
+  mounted.dispose()
+})
+
+test('纯轮播文案直接更新，不透明度闪烁，也不强制回流', () => {
+  const mounted = mountClient({ storageValues: { [storageKey]: 'rotate' } })
+  const dom = runningDom(mounted)
+  const root = dom.root()
+  const originalNow = Date.now
+  let clock = 1000
+  Date.now = () => clock
+  try {
+    dom.tick()
+    const phrase = root.content.children[0].children[0]
+    Object.defineProperty(phrase, 'offsetWidth', {
+      get() {
+        throw new Error('不该读布局')
+      },
+    })
+    phrase.classList.add = () => {
+      throw new Error('不该重放淡入')
+    }
+    phrase.classList.remove = () => {
+      throw new Error('不该摘掉淡入类')
+    }
+    clock += 3200
+    dom.tick()
+    assert.equal(dom.phrase(root), '正在翻上下文')
+    assert.equal(dom.marked(root), true)
+  } finally {
+    Date.now = originalNow
+    mounted.dispose()
+  }
+})
+
+test('解码期间切换到官方皮肤，过期结果不能重新挂载文字或图片', async () => {
+  const mounted = mountClient()
+  const decoding = deferredDecode()
+  const dom = runningDom(mounted, { manualLoad: true, decode: () => decoding.promise })
+  const root = dom.root()
+  try {
+    dom.tick()
+    const oldImage = dom.image(root)
+    dom.load()
+    cubes(mounted)[0].props.onClick()
+    assert.equal(root.content.children.length, 0)
+    assert.equal(dom.marked(root), false)
+    assert.equal(root.getAttribute('data-dsh-hud-running-whale'), null)
+    assert.equal(activeTickers(mounted).length, 0)
+    decoding.resolve()
+    await Promise.resolve()
+    assert.equal(root.content.children.length, 0)
+    assert.equal(root.getAttribute('data-dsh-hud-running-whale'), null)
+    assert.equal(oldImage.hidden, true)
+    assert.equal(oldImage.src, undefined)
+  } finally {
+    mounted.dispose()
+  }
+})
+
+test('首次候选解码失败不吞官方图标，后续动作仍可加载', async () => {
+  const mounted = mountClient()
+  const requests = []
+  const dom = runningDom(mounted, {
+    manualLoad: true,
+    decode: () => {
+      const request = deferredDecode()
+      requests.push(request)
+      return request.promise
+    },
+  })
+  const root = dom.root()
+  const originalNow = Date.now
+  let clock = 1000
+  Date.now = () => clock
+  try {
+    dom.tick()
+    dom.load()
+    requests[0].reject(new Error('first decode failed'))
+    await Promise.resolve()
+    assert.equal(dom.image(root).hidden, true)
+    assert.equal(root.getAttribute('data-dsh-hud-running-whale'), null)
+    assert.equal(dom.phrase(root), '深度求索中')
+    assert.equal(dom.marked(root), true)
+    clock += 3200
+    dom.tick()
+    dom.load()
+    requests[1].resolve()
+    await Promise.resolve()
+    assert.equal(dom.image(root).hidden, false)
+    assert.equal(dom.image(root).getAttribute('data-action'), 'context')
+    assert.equal(dom.phrase(root), '正在翻上下文')
+    assert.equal(root.getAttribute('data-dsh-hud-running-whale'), '')
+  } finally {
+    Date.now = originalNow
+    mounted.dispose()
+  }
 })

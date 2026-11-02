@@ -156,15 +156,13 @@ var WHALE = [
   '[data-chat-running][data-dsh-hud-running-text] [data-shimmer]{display:none}',
   '[data-chat-running][data-dsh-hud-running-whale] [class*="_runningIcon"]{display:none}',
   '[data-chat-running] .dshh-runWhale{order:-1;width:56px;height:56px;flex:0 0 56px;',
-  'object-fit:contain;animation:dshh-whale-settle .24s ease-out}',
+  'object-fit:contain}',
   '[data-chat-running] .dshh-runWhale[hidden]{display:none}',
-  '[data-chat-running] .dshh-runText{align-items:center;gap:10px}',
+  '[data-chat-running] .dshh-runText{align-items:center;gap:10px;min-height:56px}',
   '[data-chat-running] .dshh-runCopy{display:inline-flex;flex-direction:column;',
   'align-items:flex-start;justify-content:center;gap:2px;min-width:0}',
   '[data-chat-running] .dshh-runTime{font-size:.78em;line-height:1.2}',
   '[data-chat-running] .dshh-runPhrase{white-space:normal;overflow-wrap:anywhere;line-height:1.4}',
-  '@keyframes dshh-whale-settle{from{opacity:.5;transform:translateY(2px)}',
-  'to{opacity:1;transform:translateY(0)}}',
   '@media(prefers-reduced-motion:reduce){[data-chat-running] .dshh-runWhale{animation:none}}',
 ].join('')
 
