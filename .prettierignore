@@ -3,3 +3,5 @@ lib/
 node_modules/
 package-lock.json
 docs/images/
+
+src/client/whale-assets.ts

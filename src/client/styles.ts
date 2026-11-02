@@ -313,4 +313,29 @@ export const CSS = [
   'color:var(--dsw-alias-label-secondary,#8a8f98);font-variant-numeric:tabular-nums;}',
   '.dshh-diftext{flex:1 1 auto;min-width:0;white-space:pre;overflow:hidden;text-overflow:ellipsis;}',
   '.dshh-diftext.dshh-wrap{white-space:pre-wrap;word-break:break-word;overflow:visible;text-overflow:clip;}',
+  // 「思考中动画」设置行：几何照抄官方 AppearanceRow（同 padding、同 180px 弹性方块、
+  // 同 .5px 描边），这样它夹在外观与字体两行中间看起来是同一个界面，而不是插件贴上来的一块。
+  '.dshh-skin{display:flex;flex-direction:column;gap:8px;padding:16px 0;',
+  'border-bottom:.5px solid var(--dsw-alias-border-l2,rgba(127,127,127,0.3));}',
+  '.dshh-skinTitle{color:var(--dsw-alias-label-primary,#e5e7eb);font-size:14px;font-weight:400;line-height:22px;}',
+  '.dshh-skinCubes{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;}',
+  '.dshh-skinCube{box-sizing:border-box;flex:180px;display:flex;flex-direction:column;',
+  'align-items:center;justify-content:center;gap:4px;padding:20px 32px;',
+  'font:inherit;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary,#e5e7eb);',
+  'background:0 0;border:.5px solid var(--dsw-alias-border-l4,rgba(127,127,127,0.35));',
+  'border-radius:var(--dsw-radius-xl,12px);cursor:pointer;}',
+  '.dshh-skinCube:hover:not([data-active]){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,0.12));}',
+  '.dshh-skinCube[data-active]{background:var(--dsw-alias-bg-module-platform,rgba(127,127,127,0.16));',
+  'border-color:var(--dsw-static-neutral-bluish-400,#8a8f98);}',
+  // 轮播文案那一行：官方文字被换皮表整块藏掉，这一颗是我们自己挂上去的。
+  // 颜色 / 字号全部继承 `.running`，所以深浅主题、字号档位都自动跟随，不用自己算。
+  '.dshh-runText{display:inline-flex;align-items:baseline;gap:6px;min-width:0;color:inherit;',
+  'font-variant-numeric:tabular-nums;}',
+  '.dshh-runPhrase{white-space:nowrap;}',
+  // 「用时」压暗一档：它是背景信息，别跟正在变的那句话抢注意力。
+  '.dshh-runTime{opacity:.55;font-size:.92em;white-space:nowrap;}',
+  '.dshh-runTime:empty{display:none;}',
+  '.dshh-runPhrase.dshh-fade{animation:dshh-fadeIn .45s ease;}',
+  '@keyframes dshh-fadeIn{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:none}}',
+  '@media (prefers-reduced-motion:reduce){.dshh-runPhrase.dshh-fade{animation:none}}',
 ].join('')

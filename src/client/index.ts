@@ -6,3 +6,15 @@
  * （外壳由 `rolldown.config.mjs` 的 banner/footer 提供）。
  */
 export { apply, inject } from './plugin.js'
+
+/**
+ * 另外两个纯函数只导出给用例用：工具名怎么归组、官方文案里的「用时」怎么抠 ——
+ * 这两处都是**拼错不会报错、只是悄悄降级**的地方（正则写歪 → 全落 `other`；
+ * `···` 的位置变了 → 时长变空），值得单独盯。
+ *
+ * 框架只认 `apply` / `inject`，多出来的导出它不看。
+ */
+export { extractElapsed, groupOfTool } from './running-text.js'
+
+/** 同源文案动作表，供联动契约测试与离线预览共用。 */
+export { RUNNING_CUES } from './running-cues.js'

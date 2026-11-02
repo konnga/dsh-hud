@@ -178,6 +178,12 @@ export const zh = {
   'err.invalid-path': '无效的文件路径',
   'err.stale-host': '宿主半还没有这个端点：插件刚更新，需要重启 DSH 让宿主半重新加载',
   'err.transport': '无法连接到宿主半',
+  'skin.title': '思考中动画',
+  'skin.off': '官方',
+  'skin.plane': '纸飞机',
+  'skin.pulse': '呼吸光标',
+  'skin.rotate': '轮播文案',
+  'skin.whale': '鲸鱼娘',
 }
 
 export const en = {
@@ -357,4 +363,10 @@ export const en = {
   'err.stale-host':
     'The host half does not have this endpoint yet: the plugin was just updated, restart DSH so the host half reloads',
   'err.transport': 'Cannot reach the host half',
+  'skin.title': 'Thinking animation',
+  'skin.off': 'Official',
+  'skin.plane': 'Paper plane',
+  'skin.pulse': 'Breathing caret',
+  'skin.rotate': 'Rotating copy',
+  'skin.whale': 'Whale girl',
 }

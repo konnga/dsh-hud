@@ -22,24 +22,34 @@ test('客户端插件面声明 apply 与三个硬依赖服务', () => {
   assert.deepEqual(exported.inject, ['slots', 'connection', 'locale'])
 })
 
-test('apply 注册七个座位：Git 胶囊（含计时与工具两枚）、悬停气泡、令牌面板、面板、轮尾图片条、⋯ 菜单摘要、悬停详情', () => {
+test('apply 注册八个座位：Git 胶囊（含计时与工具两枚）、悬停气泡、令牌面板、面板、轮尾图片条、⋯ 菜单摘要、悬停详情、思考中动画设置行', () => {
   const { registrations } = mountClient()
 
   assert.equal(
     registrations.length,
-    7,
-    '应当注册七条座位 —— 工具与计时胶囊都在 Git 那一行里，不另注册',
+    8,
+    '应当注册八条座位 —— 工具与计时胶囊都在 Git 那一行里，不另注册',
   )
   const byId = Object.fromEntries(registrations.map((entry) => [entry.options.id, entry.options]))
   assert.deepEqual(Object.keys(byId).sort(), [
     'dsh-hud-panel',
     'dsh-hud-pill',
     'dsh-hud-pill-tip',
+    'dsh-hud-running-skin',
     'dsh-hud-session-hover',
     'dsh-hud-session-menu',
     'dsh-hud-token-panel',
     'dsh-hud-turn-images',
   ])
+  assert.equal(
+    byId['dsh-hud-running-skin'].name,
+    'settings.general.item',
+    '换皮开关要长在「设置 → 通用」里，而不是自己的面板里',
+  )
+  assert.ok(
+    byId['dsh-hud-running-skin'].order > 11,
+    '排在官方「外观」(10) 与「字体」(11) 之后，不插队',
+  )
   assert.equal(
     byId['dsh-hud-pill-tip'].name,
     'shell.overlay',
@@ -114,14 +124,22 @@ test('词典：代码里用到的每个 key 在 zh / en 里都有值（漏一个
 test('apply 装上词典、自有样式与两个轮询定时器（面板状态 / 侧栏摘要）', () => {
   const { styles, labels, intervals, listeners } = mountClient()
 
+  // 插件现在插两张表：自有样式（胶囊 / 面板）+ 运行状态换皮。按下标断言会随注入顺序漂移，
+  // 所以一律按 data-dsh-hud 挑。
+  const own = styles.filter((element) => element.attributes['data-dsh-hud'] === 'styles')
+  const skin = styles.filter((element) => element.attributes['data-dsh-hud'] === 'running-skin')
+
   assert.ok(labels.includes('dsh-hud: dictionaries'))
   assert.ok(labels.includes('dsh-hud: styles'))
+  assert.ok(labels.includes('dsh-hud: running skin'))
   assert.ok(labels.includes('dsh-hud: status poll'))
   assert.ok(labels.includes('dsh-hud: focus refresh'))
-  assert.equal(styles.length, 1, '只应插入一份自有样式表')
-  assert.equal(styles[0].attributes['data-dsh-hud'], 'styles')
-  assert.ok(styles[0].textContent.includes('.dshh-panel'), '样式表要覆盖自己的类名')
-  assert.ok(styles[0].textContent.includes('--dsw-alias-'), '配色走主题令牌')
+  assert.equal(own.length, 1, '只应插入一份自有样式表')
+  assert.equal(own[0].attributes['data-dsh-hud'], 'styles')
+  assert.ok(own[0].textContent.includes('.dshh-panel'), '样式表要覆盖自己的类名')
+  assert.ok(own[0].textContent.includes('--dsw-alias-'), '配色走主题令牌')
+  assert.equal(skin.length, 1, '换皮是另一张表，单独一个节点')
+  assert.equal(skin[0].attributes['data-plugin-css'], 'dsh-hud/running-skin.css')
   assert.ok(labels.includes('dsh-hud: session rows poll'))
   assert.ok(labels.includes('dsh-hud: account balance poll'))
   assert.ok(labels.includes('dsh-hud: provider balance poll'))
@@ -129,11 +147,17 @@ test('apply 装上词典、自有样式与两个轮询定时器（面板状态 /
   // "正在跑"）、摘要 30s（只在悬停/⋯ 菜单里按需展示，没必要那么勤问 git）、
   // 账号余额 300s（打的是 DeepSeek 平台的网络，余额按分钟变，密了纯属浪费）。
   //
+  // 另外那条 300ms 的是**轮播文案**的检查节拍：在 `rotate` / `whale` 皮肤下才起（默认是鲸鱼娘），
+  // 换走时 `syncRunningText` 会收掉，所以它出现与否取决于当前皮肤，不算固定节拍。
+  //
   // 模型来源余额那一路**不在这个列表里**：它改成了自适应 `setTimeout` 链 ——
   // 还没问出来时 1 秒重问（重启后宿主常常还没就绪，固定 30 秒会让胶囊空等半分钟），
   // 问出来之后才是 30 秒。这是刻意换掉的，不是漏了。
   assert.deepEqual(
-    intervals.map((item) => item.ms).sort((left, right) => left - right),
+    intervals
+      .map((item) => item.ms)
+      .filter((ms) => ms !== 300)
+      .sort((left, right) => left - right),
     [3000, 8000, 30000, 300000],
   )
   assert.ok(listeners.has('focus'), '需要 focus 时补一次刷新')
@@ -141,41 +165,75 @@ test('apply 装上词典、自有样式与两个轮询定时器（面板状态 /
 
 test('自有样式表打上 DSH 的所有权标记，且被 HMR 记账删掉后能自愈', () => {
   const { styles, head, intervals, listeners, dispatch } = mountClient()
+  const own = () => styles.filter((element) => element.attributes['data-dsh-hud'] === 'styles')
 
   // client-modules 靠 data-plugin 认领/清理样式：不打标就会被别的模块领走并删掉。
   assert.equal(
-    styles[0].attributes['data-plugin'],
+    own()[0].attributes['data-plugin'],
     '@konnga/dsh-hud',
     '值 = 客户端模块 id（= 包名），客户端运行器按它回收样式',
   )
   assert.equal(
-    styles[0].attributes['data-plugin-css'],
+    own()[0].attributes['data-plugin-css'],
     'dsh-hud/styles.css',
     '稳定 tag id，重复注入复用同一节点',
   )
 
   // 框架在 replace/invalidate/prune 里删掉整张表 —— 轮询周期要把它补回来。
-  head.removeChild(styles[0])
-  assert.equal(styles.length, 0, '先模拟框架把表删掉')
+  // 按间隔挑，不按下标：默认皮肤是鲸鱼娘时，排在最前面的是它那条 300ms 的检查节拍。
+  const poll = intervals.find((item) => item.ms === 8000)
+  head.removeChild(own()[0])
+  assert.equal(own().length, 0, '先模拟框架把表删掉')
 
-  intervals[0].callback()
-  assert.equal(styles.length, 1, '下一个轮询周期补回样式表')
+  poll.callback()
+  assert.equal(own().length, 1, '下一个轮询周期补回样式表')
   assert.equal(
-    styles[0].attributes['data-plugin'],
+    own()[0].attributes['data-plugin'],
     '@konnga/dsh-hud',
     '值 = 客户端模块 id（= 包名），客户端运行器按它回收样式',
   )
-  assert.ok(styles[0].textContent.includes('.dshh-pill'), '补回的是同一张表')
+  assert.ok(own()[0].textContent.includes('.dshh-pill'), '补回的是同一张表')
 
   // 幂等：没丢的时候再补一次不新增节点。
-  intervals[0].callback()
-  assert.equal(styles.length, 1, '已有节点就复用，不重复插入')
+  poll.callback()
+  assert.equal(own().length, 1, '已有节点就复用，不重复插入')
 
   // 回到页面（focus）也补一次。
-  head.removeChild(styles[0])
+  head.removeChild(own()[0])
   dispatch('focus')
-  assert.equal(styles.length, 1, 'focus 时补一次样式表')
+  assert.equal(own().length, 1, 'focus 时补一次样式表')
   assert.ok(listeners.has('focus'))
+})
+
+test('运行状态换皮表：各皮肤按加载条件隐藏官方图标，动效有对应 keyframes', () => {
+  for (const id of ['plane', 'pulse', 'rotate', 'whale']) {
+    const mounted = mountClient({ storageValues: { 'dsh-hud:running-skin': id } })
+    const skin = mounted.styles.find(
+      (element) => element.attributes['data-dsh-hud'] === 'running-skin',
+    )
+    const css = skin.textContent
+    if (id === 'whale') {
+      // 默认彩色图只在成功加载后隐藏整个官方图标，失败时两个子层都保留。
+      assert.ok(
+        css.includes(
+          '[data-chat-running][data-dsh-hud-running-whale] [class*="_runningIcon"]{display:none}',
+        ),
+        '图片就绪标记决定是否隐藏官方图标',
+      )
+      assert.ok(!css.includes('[class*="_runningIcon"]>span'), '不能提前藏掉官方回退图标')
+      assert.ok(!css.includes('mask:'), '彩色人物使用 img 而不是单色 mask')
+    } else {
+      assert.ok(css.includes('[class*="_runningIcon"]>span'), '藏 APNG 那层')
+      assert.ok(css.includes('[class*="_runningIcon"]>svg'), '藏静态 SVG 兜底')
+    }
+    assert.match(css, /@media\s*\(prefers-reduced-motion:reduce\)/)
+    const used = [...css.matchAll(/animation:\s*(dshh-[a-z-]+)/g)].map((match) => match[1])
+    const defined = new Set(
+      [...css.matchAll(/@keyframes\s+(dshh-[a-z-]+)/g)].map((match) => match[1]),
+    )
+    for (const name of used) assert.ok(defined.has(name), `${id}: ${name} 必须有 keyframes`)
+    mounted.dispose()
+  }
 })
 
 test('样式表结构自检：没有孤儿片段、括号配平、关键规则都真的成立', () => {

@@ -1,3 +1,8 @@
 node_modules/
 *.tgz
 .DS_Store
+
+# Local image-generation discussions and derived exports.
+/docs/images/whale-girl/
+# Recreated automatically from the canonical WebPs by build/test/typecheck.
+/src/client/whale-assets.ts

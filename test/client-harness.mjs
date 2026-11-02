@@ -40,11 +40,13 @@ export function loadBundle(options = {}) {
     innerWidth: options.innerWidth ?? 1200,
     innerHeight: 800,
     localStorage: {
-      values: new Map(),
+      values: new Map(Object.entries(options.storageValues ?? {})),
       getItem(key) {
+        if (options.storageReadFails) throw new Error('storage unavailable')
         return this.values.has(key) ? this.values.get(key) : null
       },
       setItem(key, value) {
+        if (options.storageWriteFails) throw new Error('storage unavailable')
         this.values.set(key, value)
       },
     },
@@ -61,10 +63,12 @@ export function loadBundle(options = {}) {
       )
     },
     setInterval: (callback, ms) => {
-      intervals.push({ callback, ms })
+      intervals.push({ callback, ms, cancelled: false })
       return intervals.length
     },
-    clearInterval: () => {},
+    clearInterval: (id) => {
+      if (intervals[id - 1]) intervals[id - 1].cancelled = true
+    },
     setTimeout: (callback, ms) => {
       timeouts.push({ callback, ms })
       return timeouts.length
@@ -89,6 +93,7 @@ export function loadBundle(options = {}) {
 
   const documentStub = {
     visibilityState: 'visible',
+    querySelectorAll: () => [],
     createElement: () => ({
       textContent: '',
       attributes: {},
@@ -111,6 +116,7 @@ export function loadBundle(options = {}) {
   }
 
   const navigatorStub = {
+    language: options.browserLanguage ?? 'zh-CN',
     clipboard: {
       writeText(text) {
         if (options.clipboardFails) return Promise.reject(new Error('denied'))
@@ -220,6 +226,7 @@ export function mountClient(options = {}) {
         dictionaries.push({ namespace, dictionary })
         return () => {}
       },
+      ...options.locale,
     },
     // 需要驱动真实 store 的用例自己注入 rpc stub；默认直接拒绝，免得静默走空。
     connection: {
@@ -365,9 +372,17 @@ export function parseStylesheet(css) {
   return { rules, orphan }
 }
 
-/** 取自有样式表（`ensureStyles` 注入的那个 `<style>` 的文本）。 */
+/**
+ * 取自有样式表（`ensureStyles` 注入的那个 `<style>` 的文本）。
+ *
+ * 按 `data-dsh-hud="styles"` 挑，而不是取 `styles[0]`：插件现在会注入第二张表
+ * （运行状态换皮，`data-dsh-hud="running-skin"`），按下标取会随注入顺序漂移。
+ */
 export function stylesheetText() {
-  return mountClient().styles[0].textContent
+  const own = mountClient().styles.find(
+    (element) => element.attributes['data-dsh-hud'] === 'styles',
+  )
+  return own.textContent
 }
 
 /** 按选择器取一条规则（解析出来的，不是子串匹配）。 */

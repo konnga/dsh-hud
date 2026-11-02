@@ -21,6 +21,7 @@ import { CSS } from './styles.js'
 import { HudDockPill } from './components/dock-pill.js'
 import { HudFloatingPanel } from './components/floating-panel.js'
 import { PillTip } from './components/pill-tip.js'
+import { SkinRow } from './components/skin-row.js'
 import { TokenPanel } from './components/token-panel.js'
 import { SessionMenuSummary, SessionRowHoverChip } from './components/sidebar.js'
 import { TurnImages } from './components/turn-images.js'
@@ -37,6 +38,8 @@ import {
   probe,
 } from './shared.js'
 import { watchModelSelection } from './model-watch.js'
+import { ensureRunningSkin, watchRunningSkin } from './running-skin.js'
+import { configureRunningText, refreshRunningText } from './running-text.js'
 import { createStore } from './store/index.js'
 import type { StoreContext } from './store/types.js'
 import { cssChipsGap, ensureStyles } from './styles-apply.js'
@@ -67,6 +70,9 @@ interface HudSlots {
 }
 
 interface HudLocale {
+  getSnapshot?: () => { active?: string } | null
+  resolveText?: (text: { zh: string; en: string }) => string
+  subscribe?: (listener: () => void) => () => void
   register(
     namespace: string,
     dictionaries: { zh: Record<string, string>; en: Record<string, string> },
@@ -98,7 +104,50 @@ export function apply(ctx: HudPluginContext): void {
     }
   }, 'dsh-hud: styles')
 
+  // 「思考中动画」的设置行：进「设置 → 通用」的 item 座位，排在官方「外观」「字体」之后
+  // （它们占 10、11）。座位给 `t`，词典走本插件的 NS。
+  ctx.slots.inject('settings.general.item', function () {
+    return ctx.slots.register(
+      {
+        name: 'settings.general.item',
+        id: 'dsh-hud-running-skin',
+        order: 12,
+        locale: NS,
+      },
+      SkinRow,
+    )
+  })
+
   var store = createStore(ctx)
+
+  // 先接工具与 locale，再由统一皮肤入口控制样式、轮播与设置选中态。
+  ctx.effect(function () {
+    var dispose = configureRunningText({
+      readTool: function () {
+        var snapshot = store.getSnapshot()
+        var active = snapshot.tools ? snapshot.tools.active : null
+        return active ? active.name : null
+      },
+      resolveText: function (text) {
+        if (typeof ctx.locale.resolveText === 'function') return ctx.locale.resolveText(text)
+        var locale = ctx.locale.getSnapshot ? ctx.locale.getSnapshot() : null
+        return locale && locale.active && !locale.active.toLowerCase().startsWith('zh')
+          ? text.en
+          : text.zh
+      },
+    })
+    var unsubscribeStore = store.subscribe(refreshRunningText)
+    var unsubscribe = ctx.locale.subscribe ? ctx.locale.subscribe(refreshRunningText) : null
+    return function () {
+      if (unsubscribe) unsubscribe()
+      unsubscribeStore()
+      dispose()
+    }
+  }, 'dsh-hud: running text')
+
+  ctx.effect(function () {
+    return watchRunningSkin()
+  }, 'dsh-hud: running skin')
 
   // 起手留一行：诊断里**有没有这一行**就足以区分"客户端半压根没加载"与"加载了但
   // 哪一环没接上"（这一行由 apply 发，与后面的投影/名单无关）。
@@ -116,6 +165,7 @@ export function apply(ctx: HudPluginContext): void {
     var id = window.setInterval(function () {
       if (document.visibilityState === 'hidden') return
       ensureStyles()
+      ensureRunningSkin()
       store.refresh()
     }, POLL_MS)
     return function () {
@@ -127,6 +177,7 @@ export function apply(ctx: HudPluginContext): void {
   ctx.effect(function () {
     var onFocus = function () {
       ensureStyles()
+      ensureRunningSkin()
       store.refresh()
     }
     window.addEventListener('focus', onFocus)
