@@ -64,6 +64,7 @@ export function createSessionInfoSlice(
           previous !== null &&
           previous.available === value.available &&
           previous.createdAt === value.createdAt &&
+          previous.startedAt === value.startedAt &&
           previous.llmMs === value.llmMs &&
           previous.toolMs === value.toolMs &&
           previous.turns === value.turns &&

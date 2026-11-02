@@ -112,6 +112,53 @@ test('计时胶囊：不足一分钟显示 <1m；不可用与"没有统计"时�
   )
 })
 
+test('计时胶囊：从第一条消息（startedAt）算起，闲置的那十几天不算进来', () => {
+  const now = Date.now()
+  const createdAt = now - 16 * 24 * 3600_000 // 空会话 16 天前就建好了
+  const startedAt = now - 134 * 60000 // 今天才开口，跑了 2h14m
+  const tips = []
+  const node = renderTimerPill(
+    {
+      available: true,
+      sessionId: 'session-1',
+      createdAt,
+      startedAt,
+      turns: 2,
+      steps: 13,
+      llmMs: 1000,
+      toolMs: 2000,
+      now,
+    },
+    { methods: { showTip: (key, text) => tips.push(text) } },
+  )
+  assert.ok(
+    textOf(node).includes('2h 14m'),
+    `按第一条消息起算（2h 14m），不能是 16 天，实际 ${textOf(node)}`,
+  )
+  assert.ok(!textOf(node).includes('d'), `不该出现天数，实际 ${textOf(node)}`)
+
+  hoverPill(node, 'session-timer', { left: 100, top: 300, right: 190 })
+  assert.ok(
+    tips[0].includes('timer.started') && !tips[0].includes('timer.created'),
+    `开口晚于创建时，悬停说"开始于"而不是"创建于"，实际 ${tips[0]}`,
+  )
+})
+
+test('计时胶囊：老宿主没给 startedAt 时退回创建时刻（向后兼容，不画成 0）', () => {
+  const now = Date.now()
+  const node = renderTimerPill({
+    available: true,
+    sessionId: 'session-1',
+    createdAt: now - 45 * 60000,
+    turns: 1,
+    steps: 1,
+    llmMs: 1,
+    toolMs: 1,
+    now,
+  })
+  assert.ok(textOf(node).includes('45m'), `没有 startedAt 就按 createdAt，实际 ${textOf(node)}`)
+})
+
 test('计时胶囊：挂载后按 3 秒节奏取数、4 秒跳一次挂钟，并把取到的值写进快照', async () => {
   const mini = createMiniReact()
   const calls = []

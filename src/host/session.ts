@@ -162,17 +162,48 @@ export function readPromptHistory(
   return { available: true, sessionId, prompts }
 }
 /**
- * 一个会话的"运行时长"事实：创建时刻 + 内置 `sessionStats` 的累计数字。
+ * 这个会话自己第一条 `turn/start` 的时刻 —— 也就是它**第一次真的开始干活**。
  *
- * 与 codex-hud 的会话时长口径一致：**挂钟时长 = 现在 − 会话创建时刻**（含等待与空闲），
- * 另外把"真的在干活"的两段（模型墙钟 `llmMs`、工具墙钟 `toolMs`）一并给出，让胶囊的悬停
- * 能说清"74 小时里其实只有 1 小时 52 分在跑"。
+ * 用 `turn/start` 而不是"最后一个事件"或"文件 mtime"：前者是这条会话自己产生的，
+ * 后者会把读日志、恢复会话这些噪音算成活动。fork 来的历史从 `inheritedEventCount`
+ * 之后开始看，父会话的轮次不算这个子会话的开始。
+ *
+ * 拿不到（没有日志、还没开过口、事件形状不对）回 `null`，调用方退回创建时刻。
+ */
+function firstTurnAt(session: HudSession): number | null {
+  const log = session.log
+  if (!Array.isArray(log)) return null
+  const inherited =
+    typeof session.inheritedEventCount === 'number' && session.inheritedEventCount > 0
+      ? Math.floor(session.inheritedEventCount)
+      : 0
+  for (let index = inherited; index < log.length; index += 1) {
+    const event = log[index]
+    if (event === null || typeof event !== 'object') continue
+    const record = event as { type?: unknown; time?: unknown }
+    if (record.type !== 'turn/start') continue
+    const time = record.time
+    if (typeof time !== 'number' || !Number.isFinite(time)) continue
+    return time
+  }
+  return null
+}
+/**
+ * 一个会话的"运行时长"事实：创建时刻、真正开始的时刻 + 内置 `sessionStats` 的累计数字。
+ *
+ * 口径与 codex-hud 的会话时长一致：**挂钟时长 = 现在 − 开始时刻**（含开始之后的等待与
+ * 空闲），另外把"真的在干活"的两段（模型墙钟 `llmMs`、工具墙钟 `toolMs`）一并给出，让
+ * 胶囊的悬停能说清"74 小时里其实只有 1 小时 52 分在跑"。
+ *
+ * **开始时刻不是创建时刻**：DSH 在打开一个空会话时就写下了 header，那个会话可能闲置几天
+ * 才等到第一条消息。按创建时刻算，第一次说话就会显示"16 天"（实测踩过）。所以取第一条
+ * `turn/start`；还没开过口时才退回创建时刻（此刻两者本来也差不多）。
  *
  * 只读；`sessions` 服务没到齐或会话已不在（归档、子会话已回收）时回 `available: false`，
  * 客户端据此不画这枚胶囊。
  *
  * @param sessionId - 会话 id。
- * @returns `{ available, sessionId, createdAt, turns, steps, llmMs, toolMs, now }`。
+ * @returns `{ available, sessionId, createdAt, startedAt, turns, steps, llmMs, toolMs, now }`。
  */
 export function readSessionTime(sessionId: string | null): HudSessionTime {
   const now = Date.now()
@@ -180,6 +211,7 @@ export function readSessionTime(sessionId: string | null): HudSessionTime {
     available: false,
     sessionId,
     createdAt: null,
+    startedAt: null,
     turns: null,
     steps: null,
     llmMs: null,
@@ -204,11 +236,20 @@ export function readSessionTime(sessionId: string | null): HudSessionTime {
     header !== undefined && header !== null && typeof header.createdAt === 'number'
       ? header.createdAt
       : null
+  const firstTurn = firstTurnAt(session)
+  // 事件时间不可能早于创建时刻；真出现（时钟回拨、fork 继承）就以创建时刻为准。
+  const startedAt =
+    firstTurn === null
+      ? createdAt
+      : createdAt === null || firstTurn >= createdAt
+        ? firstTurn
+        : createdAt
   const stats = sessionStats(session)
   return {
     available: true,
     sessionId,
     createdAt,
+    startedAt,
     turns: stats === null ? null : stats.turns,
     steps: stats === null ? null : stats.steps,
     llmMs: stats === null ? null : stats.llmMs,

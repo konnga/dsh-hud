@@ -436,11 +436,17 @@ export function timerPillNode(
   var createdAt = value.createdAt
   if (typeof createdAt !== 'number') return null
 
-  var age = Math.max(0, now - createdAt)
+  // 从"第一次真的开始干活"算起，不是从 header 写下那一刻：空会话可能开着好几天才等到第一句话。
+  var startedAt = typeof value.startedAt === 'number' ? value.startedAt : createdAt
+  var age = Math.max(0, now - startedAt)
   // 整句话不变（用户没要求改排版），只把里面的**读数**挑出来高亮：
   // 创建时间留灰（时间戳染上就等于满屏是色，重点反而没了），时长/轮/步上色。
   var readings: string[] = []
-  var hints: string[] = [t('timer.title'), t('timer.created', { time: fullWhen(createdAt) })]
+  var when =
+    startedAt > createdAt
+      ? t('timer.started', { time: fullWhen(startedAt) })
+      : t('timer.created', { time: fullWhen(createdAt) })
+  var hints: string[] = [t('timer.title'), when]
   if (typeof value.llmMs === 'number' && typeof value.toolMs === 'number') {
     var llmText = formatDuration(value.llmMs)
     var toolText = formatDuration(value.toolMs)

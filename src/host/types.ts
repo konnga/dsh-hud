@@ -468,11 +468,19 @@ export interface HudPromptHistory {
   prompts: string[]
 }
 
-/** `session-time` 端点载荷：创建时刻 + 累计墙钟与轮次/步数。 */
+/** `session-time` 端点载荷：创建时刻、真正开始的时刻 + 累计墙钟与轮次/步数。 */
 export interface HudSessionTime {
   available: boolean
   sessionId: string | null
   createdAt: number | null
+  /**
+   * 计时起点：这个会话**第一次真正开始干活**（第一条 `turn/start`）的时刻。
+   *
+   * 与 `createdAt` 不同的原因：DSH 在你打开一个空会话时就写下了 header，之后可能闲置几天
+   * 才等到第一条消息。按创建时刻计时会把这段闲置算进"本次会话运行时长"，于是刚说第一句话
+   * 就显示 16 天。还没开过口（没有 `turn/start`）时退回 `createdAt`。
+   */
+  startedAt: number | null
   turns: number | null
   steps: number | null
   llmMs: number | null

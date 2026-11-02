@@ -579,11 +579,13 @@ export interface ToolsState {
   updatedAt: number | null
 }
 
-/** `session-time` 端点载荷：创建时刻 + 累计墙钟与轮次/步数。 */
+/** `session-time` 端点载荷：创建时刻、真正开始的时刻 + 累计墙钟与轮次/步数。 */
 export interface HudSessionTime {
   available: boolean
   sessionId?: string | null
   createdAt?: number | null
+  /** 计时起点（第一条 `turn/start`）；会话还没开过口时等于 `createdAt`。 */
+  startedAt?: number | null
   turns?: number | null
   steps?: number | null
   llmMs?: number | null

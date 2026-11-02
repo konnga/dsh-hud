@@ -63,6 +63,7 @@ export const zh = {
   // ── 会话计时胶囊 ──
   'timer.title': '本次会话运行时长',
   'timer.created': '创建于 {time}',
+  'timer.started': '开始于 {time}',
   'timer.work': '其中模型 {llm}、工具 {tool}',
   'timer.turns': '{turns} 轮 / {steps} 步',
   // ── 账号余额胶囊 ──
@@ -246,6 +247,7 @@ export const en = {
   // ── Session timer capsule ──
   'timer.title': "This session's running time",
   'timer.created': 'started {time}',
+  'timer.started': 'first message {time}',
   'timer.work': 'model {llm}, tools {tool}',
   'timer.turns': '{turns} turns / {steps} steps',
   // ── Account balance capsule ──

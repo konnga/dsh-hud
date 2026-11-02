@@ -79,6 +79,57 @@ test('会话时长：投影键缺失（没装 session-stats）时仍给挂钟，
   done()
 })
 
+test('会话时长：空会话闲置 16 天后才开第一句话，从第一条消息算起而不是创建时刻', (t, done) => {
+  const created = Date.now() - 16 * 24 * 3600_000
+  const firstTurn = Date.now() - 5 * 60_000
+  const session = {
+    ...fakeSession('session-1', created),
+    // 真实 Session 是内存里的日志数组：创建那一刻只有 bootstrap 事件，第一轮在 16 天后。
+    log: [
+      { type: 'permission/preset', time: created + 14 },
+      { type: 'session/end-seed', time: created + 15 },
+      { type: 'turn/start', time: firstTurn },
+    ],
+  }
+  mountWithSession(session, { turns: 2, steps: 13, llmMs: 1000, toolMs: 2000 })
+  const value = readSessionTime('session-1')
+  assert.equal(value.createdAt, created, '创建时刻照旧给（悬停要用它说明"创建于"）')
+  assert.equal(value.startedAt, firstTurn, '计时起点是第一条 turn/start')
+  done()
+})
+
+test('会话时长：fork 继承来的父会话轮次不算这个子会话的开始', (t, done) => {
+  const created = Date.now() - 3600_000
+  const childTurn = created + 60_000
+  const session = {
+    ...fakeSession('session-1', created),
+    inheritedEventCount: 2,
+    log: [
+      { type: 'turn/start', time: created - 86_400_000 }, // 父会话的历史
+      { type: 'turn/end', time: created - 86_000_000 },
+      { type: 'turn/start', time: childTurn }, // 子会话自己开的头
+    ],
+  }
+  mountWithSession(session, { turns: 1, steps: 1, llmMs: 1, toolMs: 1 })
+  assert.equal(readSessionTime('session-1').startedAt, childTurn)
+  done()
+})
+
+test('会话时长：还没有任何一轮时退回创建时刻；日志形状不对也不炸', (t, done) => {
+  const created = Date.now() - 60_000
+  const mounted = mountWithSession(fakeSession('session-1', created), undefined)
+  assert.equal(readSessionTime('session-1').startedAt, created, '没开过口：从创建时刻算')
+
+  mounted.cleanups.forEach((fn) => fn())
+  const weird = {
+    ...fakeSession('session-1', created),
+    log: [null, 42, { type: 'turn/start', time: 'oops' }, { type: 'turn/start' }],
+  }
+  mountWithSession(weird, undefined)
+  assert.equal(readSessionTime('session-1').startedAt, created, '脏日志只退回创建时刻')
+  done()
+})
+
 test('会话时长：注入被别的挂载实例卸载清掉时，按契约用 ctx.get 兜底', (t, done) => {
   const session = fakeSession('session-1', Date.now() - 60_000)
   const stats = { turns: 1, steps: 1, llmMs: 1, toolMs: 1 }
