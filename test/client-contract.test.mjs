@@ -147,7 +147,7 @@ test('apply 装上词典、自有样式与两个轮询定时器（面板状态 /
   // "正在跑"）、摘要 30s（只在悬停/⋯ 菜单里按需展示，没必要那么勤问 git）、
   // 账号余额 300s（打的是 DeepSeek 平台的网络，余额按分钟变，密了纯属浪费）。
   //
-  // 另外那条 300ms 的是**轮播文案**的检查节拍：在 `rotate` / `whale` 皮肤下才起（默认是鲸鱼娘），
+  // 另外那条 300ms 的是**轮播文案**的检查节拍：在 `plane` / `whale` 皮肤下才起（默认是鲸鱼娘），
   // 换走时 `syncRunningText` 会收掉，所以它出现与否取决于当前皮肤，不算固定节拍。
   //
   // 模型来源余额那一路**不在这个列表里**：它改成了自适应 `setTimeout` 链 ——
@@ -206,7 +206,7 @@ test('自有样式表打上 DSH 的所有权标记，且被 HMR 记账删掉后�
 })
 
 test('运行状态换皮表：各皮肤按加载条件隐藏官方图标，动效有对应 keyframes', () => {
-  for (const id of ['plane', 'pulse', 'rotate', 'whale']) {
+  for (const id of ['plane', 'whale']) {
     const mounted = mountClient({ storageValues: { 'dsh-hud:running-skin': id } })
     const skin = mounted.styles.find(
       (element) => element.attributes['data-dsh-hud'] === 'running-skin',

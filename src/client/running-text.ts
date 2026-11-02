@@ -180,7 +180,7 @@ function mountInto(content: Element): HTMLElement {
     }
     imageEl = image
   } else {
-    // 轮播文案皮肤维持原来的一行布局。
+    // 纸飞机轮播文案使用一行布局。
     span.appendChild(phrase)
     span.appendChild(time)
   }
@@ -369,7 +369,7 @@ function onMotionChange(): void {
 
 /** 所有皮肤变更（包括轮询 / focus / storage）都经过这里。 */
 export function syncRunningText(id: RunningSkinId): void {
-  if (id !== 'rotate' && id !== 'whale') {
+  if (id !== 'plane' && id !== 'whale') {
     stopRunningText()
     return
   }

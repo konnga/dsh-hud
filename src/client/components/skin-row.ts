@@ -47,18 +47,6 @@ function skinIcon(id: RunningSkinId): React.ReactElement {
       h('path', { d: 'M14.6 1.4 1.4 6.9l5 1.7 1.7 5z', stroke: 'currentColor', strokeWidth: 1 }),
     )
   }
-  if (id === 'pulse') {
-    return h(
-      'svg',
-      { key: 'icon', width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none' },
-      h('path', {
-        d: 'M8 3.5v9',
-        stroke: 'currentColor',
-        strokeWidth: 1.5,
-        strokeLinecap: 'round',
-      }),
-    )
-  }
   return h(
     'svg',
     { key: 'icon', width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none' },

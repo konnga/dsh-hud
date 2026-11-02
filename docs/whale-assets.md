@@ -13,6 +13,8 @@
 
 运行与构建都不读取 `docs/images/whale-girl/`。删除或缺少本地讨论目录，不影响干净检出的构建、类型检查和测试。无需 Python、生图服务或 API 密钥。
 
+设置只保留官方、纸飞机、鲸鱼娘三项。纸飞机配合相同的工具联动文案，以一行显示；旧 `pulse` / `rotate` 偏好自动映射到 `plane`，默认鲸鱼娘与官方选择不变。
+
 ## 更新运行图片
 
 1. 把确认后的动作图放到 `src/client/assets/whale-girl/`：112 × 112px、无损 WebP（RGBA，保留透明度）；文件名对应动作 ID，如 `rice_eating.webp`。

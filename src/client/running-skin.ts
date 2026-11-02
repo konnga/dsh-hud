@@ -22,7 +22,7 @@
 import { stopRunningText, syncRunningText } from './running-text.js'
 
 /** 可选的皮肤。`off` 表示不注入，官方那套原样保留。 */
-export type RunningSkinId = 'plane' | 'pulse' | 'rotate' | 'whale' | 'off'
+export type RunningSkinId = 'plane' | 'whale' | 'off'
 
 /**
  * 当前启用的皮肤。
@@ -36,7 +36,7 @@ export var RUNNING_SKIN: RunningSkinId = 'whale'
  * 设置面板里的方块的顺序。`off` 排第一：想回到原样的人一眼能找到。
  * （默认选中鲸鱼娘；已有存储选择保持不变。）
  */
-export var SKIN_IDS: RunningSkinId[] = ['off', 'plane', 'pulse', 'rotate', 'whale']
+export var SKIN_IDS: RunningSkinId[] = ['off', 'plane', 'whale']
 
 /** 运行时选择的存储键。浏览器控制台里改它再刷新，等价于点设置面板。 */
 var STORAGE_KEY = 'dsh-hud:running-skin'
@@ -50,6 +50,9 @@ var storageFailed = false
 var listeners = new Set<() => void>()
 
 function storedSkin(value: string | null): RunningSkinId {
+  // 旧轮播与呼吸光标统一归入纸飞机；只规范化生效值，不主动覆写旧存储。
+  // 新旧窗口同时打开时也能通过 storage / focus 安全同步。
+  if (value === 'rotate' || value === 'pulse') return 'plane'
   return value !== null && Object.prototype.hasOwnProperty.call(PRESETS, value)
     ? (value as RunningSkinId)
     : RUNNING_SKIN
@@ -87,68 +90,18 @@ var PLANE_MASK =
   'PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiI+' +
   'PHBhdGggZD0iTTE0LjYgMS40IDEuNCA2LjlsNSAxLjcgMS43IDV6IiBmaWxsPSIjMDAwIi8+PC9zdmc+")'
 
-/**
- * 三个皮肤共用的部分：藏掉官方图标里的两个子元素（APNG mask + 静态 SVG 兜底），
- * 让 `_runningIcon` 这个容器空出来当自己的画布。
- *
- * 容器本身保留官方给的尺寸（`calc(14px + var(--dsh-content-font-delta,0px))`）与
- * `contain:strict`，所以这里不动宽高 —— 字号调大时图标会跟着长大。
- */
-var BASE = [
+/** 纸飞机替换原图标，文案只在挂载成功后接管。失败与多会话保留官方文字。 */
+var PLANE = [
   '[data-chat-running] [class*="_runningIcon"]>span,',
   '[data-chat-running] [class*="_runningIcon"]>svg{display:none}',
-  // 系统开了「减弱动态效果」就都别动：官方那套是这么做的，自己加的也要跟上，
-  // 否则用户关掉动效之后只有我们这一处在动。
-  '@media (prefers-reduced-motion:reduce){',
-  '[data-chat-running] [class*="_runningIcon"],',
-  '[data-chat-running] [data-shimmer],',
-  '[data-chat-running] [class*="_runningContent"]::after{animation:none!important}}',
-].join('')
-
-/** 静态纸飞机：给不需要图标动画的皮肤复用（PULSE / ROTATE）。 */
-var PLANE_STILL = [
-  '[data-chat-running] [class*="_runningIcon"]{background:currentColor;mask:',
-  PLANE_MASK,
-  ' center/contain no-repeat}',
-].join('')
-
-/** 纸飞机 + 官方扫光放慢：动效还在，但不那么抢眼。 */
-var PLANE = [
   '[data-chat-running] [class*="_runningIcon"]{background:currentColor;mask:',
   PLANE_MASK,
   ' center/contain no-repeat;animation:dshh-plane 2.6s ease-in-out infinite}',
+  '[data-chat-running][data-dsh-hud-running-text] [data-shimmer]{display:none}',
   '@keyframes dshh-plane{0%,100%{transform:translate3d(0,0,0) rotate(0)}',
   '50%{transform:translate3d(1px,-2px,0) rotate(-8deg)}}',
-  // 扫光的两个动画层要一起改：只改外层，遮罩和文字会错位。
-  '[data-chat-running] [data-shimmer]>[inert]>span,',
-  '[data-chat-running] [data-shimmer]>[inert]>span>span{',
-  'animation-duration:3s;animation-delay:0s;animation-timing-function:linear}',
-  '[data-chat-running] [data-shimmer]>[inert]>span{',
-  'mask-image:linear-gradient(105deg,transparent 18%,#000 46% 54%,transparent 82%)}',
-].join('')
-
-/** 纸飞机不动 + 去掉扫光，改成文字呼吸 + 尾部光标。 */
-var PULSE = [
-  PLANE_STILL,
-  // 扫光是叠在文字上的第二层，整层藏掉；底层是真文本节点，会留着。
-  '[data-chat-running] [data-shimmer]>[inert]{display:none}',
-  '[data-chat-running] [data-shimmer]{animation:dshh-breathe 2.8s ease-in-out infinite}',
-  '@keyframes dshh-breathe{0%,100%{opacity:.55}50%{opacity:1}}',
-  // `_runningContent` 是 inline-flex 且带 6px gap，::after 会自动跟文字隔开。
-  '[data-chat-running] [class*="_runningContent"]::after{content:"";',
-  'width:1.5px;height:12px;margin-left:1px;background:currentColor;',
-  'animation:dshh-blink 1.1s steps(1,end) infinite}',
-  '@keyframes dshh-blink{0%,49.9%{opacity:1}50%,100%{opacity:0}}',
-].join('')
-
-/**
- * 轮播文案：官方那行整块藏掉，文字交给 `running-text.ts` 挂上去的 span。
- *
- * 只藏成功挂载了替换节点的运行行。多会话或 DOM 挂载失败时不打标，官方文案保留。
- */
-var ROTATE = [
-  PLANE_STILL,
-  '[data-chat-running][data-dsh-hud-running-text] [data-shimmer]{display:none}',
+  '@media(prefers-reduced-motion:reduce){',
+  '[data-chat-running] [class*="_runningIcon"]{animation:none!important}}',
 ].join('')
 
 /** 彩色全身图不走 currentColor mask；只接管图片已加载成功的唯一运行行。 */
@@ -168,9 +121,7 @@ var WHALE = [
 
 var PRESETS: Record<RunningSkinId, string> = {
   off: '',
-  plane: BASE + PLANE,
-  pulse: BASE + PULSE,
-  rotate: BASE + ROTATE,
+  plane: PLANE,
   whale: WHALE,
 }
 

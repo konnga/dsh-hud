@@ -54,52 +54,38 @@ test('没选过的时候按默认皮肤注入，存储读不到也不至于整�
   )
 })
 
-test('设置行五个方块，点一下就写存储并当场换表', () => {
+test('设置行三个方块：官方 / 纸飞机 / 鲸鱼娘，纸飞机合并轮播文案', () => {
   const mounted = mountClient()
   const buttons = cubes(mounted)
-
-  assert.equal(buttons.length, 5, '官方 / 纸飞机 / 呼吸光标 / 轮播文案 / 鲸鱼娘')
+  assert.equal(buttons.length, 3)
   assert.deepEqual(
     buttons.map((button) => button.children[1].children[0]),
-    ['skin.off', 'skin.plane', 'skin.pulse', 'skin.rotate', 'skin.whale'],
-    '顺序固定：官方排第一，想回到原样的人一眼能找到',
+    ['skin.off', 'skin.plane', 'skin.whale'],
   )
-  assert.equal(
-    buttons[4].props['data-active'],
-    '',
-    '默认那枚（鲸鱼娘）是选中态；选中态走 data-active 而不是再加一个类',
+  assert.equal(buttons[2].props['data-active'], '', '默认鲸鱼娘保持不变')
+  buttons[1].props.onClick()
+  assert.equal(mounted.windowStub.localStorage.getItem('dsh-hud:running-skin'), 'plane')
+  const css = skinTag(mounted).textContent
+  assert.ok(css.includes('animation:dshh-plane'))
+  assert.ok(
+    css.includes('[data-chat-running][data-dsh-hud-running-text] [data-shimmer]{display:none}'),
   )
-
-  // 点「呼吸光标」：存储要写、表要当场换，不等轮询。
-  buttons[2].props.onClick()
-  assert.equal(mounted.windowStub.localStorage.getItem('dsh-hud:running-skin'), 'pulse')
-  const swapped = skinTag(mounted)
-  assert.ok(swapped.textContent.includes('dshh-breathe'), '立刻换成呼吸光标那套')
-  assert.ok(!swapped.textContent.includes('dshh-plane'), '旧皮肤不能残留在同一张表里')
+  assert.ok(!css.includes('dshh-breathe'))
+  assert.ok(!css.includes('dshh-blink'))
+  assert.equal(activeTickers(mounted).length, 1)
+  mounted.dispose()
 })
 
-test('选「轮播文案」：藏掉官方那行，并起一个 300ms 的检查节拍', () => {
+test('选纸飞机后启动文案轮播；重复选择不累积定时器', () => {
   const mounted = mountClient()
-  const before = mounted.intervals.length
-
-  cubes(mounted)[3].props.onClick()
-
-  const tag = skinTag(mounted)
-  assert.ok(
-    tag.textContent.includes(
-      '[data-chat-running][data-dsh-hud-running-text] [data-shimmer]{display:none}',
-    ),
-    '只有挂载成功才隐藏官方文字',
-  )
-  assert.ok(!tag.textContent.includes('dshh-breathe'), '轮播不是呼吸光标那套')
-  assert.equal(mounted.windowStub.localStorage.getItem('dsh-hud:running-skin'), 'rotate')
-
-  // 默认鲸鱼娘也复用轮播节拍；切到 rotate 后仍只有一个有效节拍。
+  cubes(mounted)[1].props.onClick()
+  cubes(mounted)[1].props.onClick()
+  assert.equal(mounted.windowStub.localStorage.getItem('dsh-hud:running-skin'), 'plane')
   const tickers = activeTickers(mounted)
-  assert.equal(tickers.length, 1, '轮播节拍只该有一条，重复点不能越积越多')
-  // 假 document 里没有 `[data-chat-running]`：这一拍应当安静地什么都不做。
+  assert.equal(tickers.length, 1)
   assert.doesNotThrow(() => tickers[0].callback())
-  assert.ok(mounted.intervals.length >= before, '点一下不该把已有的节拍清掉')
+  assert.ok(skinTag(mounted).textContent.includes('dshh-plane'))
+  mounted.dispose()
 })
 
 test('工具名归组：认得出改文件 / 敲命令 / 查资料 / 翻代码，认不出的落 other', () => {
@@ -317,7 +303,7 @@ test('focus / 轮询同时同步样式、轮播启停和已打开设置行的选
   assert.ok(skinTag(mounted))
   assert.equal(activeTickers(mounted).length, 1)
   assert.equal(dom.marked(root), true)
-  assert.deepEqual(picked(mini.current()), ['skin.rotate'])
+  assert.deepEqual(picked(mini.current()), ['skin.plane'])
   mini.unmount()
   mounted.dispose()
 })
@@ -357,17 +343,17 @@ test('存储写入失败保留内存选择，focus 和轮询不能撤销它', ()
   const buttons = findAll(mini.current(), (item) => item.props?.className === 'dshh-skinCube')
   buttons[1].props.onClick()
   assert.deepEqual(picked(mini.current()), ['skin.plane'])
-  assert.equal(activeTickers(mounted).length, 0)
+  assert.equal(activeTickers(mounted).length, 1)
   mounted.dispatch('focus')
   mounted.intervals.find((item) => item.ms === 8000).callback()
   assert.ok(skinTag(mounted).textContent.includes('dshh-plane'))
-  assert.equal(activeTickers(mounted).length, 0)
-  assert.equal(dom.marked(root), false)
+  assert.equal(activeTickers(mounted).length, 1)
+  assert.equal(dom.marked(root), true)
   assert.deepEqual(picked(mini.current()), ['skin.plane'])
   // 明确的新跨窗口选择仍然可以覆盖这个非持久化值。
   mounted.dispatch('storage', { key: storageKey, newValue: 'rotate' })
   assert.equal(activeTickers(mounted).length, 1)
-  assert.deepEqual(picked(mini.current()), ['skin.rotate'])
+  assert.deepEqual(picked(mini.current()), ['skin.plane'])
   mini.unmount()
   mounted.dispose()
 })
@@ -421,7 +407,7 @@ test('HMR 删除样式后恢复，切过 off 重新建表后卸载也能完整�
   assert.ok(skinTag(mounted))
   assert.equal(activeTickers(mounted).length, 1)
   cubes(mounted)[0].props.onClick()
-  cubes(mounted)[3].props.onClick()
+  cubes(mounted)[1].props.onClick()
   assert.equal(dom.marked(root), true)
   mounted.dispose()
   assert.equal(skinTag(mounted), undefined)
@@ -490,7 +476,7 @@ test('鲸鱼娘是可选皮肤：真彩色 img，加载后才替换官方图标'
   const mounted = mountClient()
   const dom = runningDom(mounted, { manualLoad: true })
   const root = dom.root()
-  cubes(mounted)[4].props.onClick()
+  cubes(mounted)[2].props.onClick()
   assert.equal(mounted.windowStub.localStorage.getItem(storageKey), 'whale')
   assert.equal(activeTickers(mounted).length, 1)
   const css = skinTag(mounted).textContent
@@ -559,7 +545,7 @@ test('文案轮播与动作同拍：换工具立即复位；切语言不改变�
   let clock = 1000
   Date.now = () => clock
   try {
-    cubes(mounted)[4].props.onClick()
+    cubes(mounted)[2].props.onClick()
     assert.equal(dom.image(root).getAttribute('data-action'), 'thinking')
     clock += 3200
     dom.tick()
@@ -627,7 +613,7 @@ test('完整轮播能访问所有动作素材，减弱动态冻结当前组但�
   let clock = 1000
   Date.now = () => clock
   try {
-    cubes(mounted)[4].props.onClick()
+    cubes(mounted)[2].props.onClick()
     const tools = {
       idle: null,
       edit: 'apply_patch',
@@ -674,7 +660,7 @@ test('鲸鱼娘：多会话、换皮与新轮次都清理图片，过期加载�
   const mounted = mountClient()
   const dom = runningDom(mounted, { manualLoad: true })
   const root = dom.root()
-  cubes(mounted)[4].props.onClick()
+  cubes(mounted)[2].props.onClick()
   const image = dom.image(root)
   const candidate = dom.candidate()
   const lateLoad = candidate.onload
@@ -689,7 +675,7 @@ test('鲸鱼娘：多会话、换皮与新轮次都清理图片，过期加载�
   dom.tick()
   dom.load()
   assert.equal(dom.image(root).getAttribute('data-action'), 'thinking')
-  cubes(mounted)[3].props.onClick()
+  cubes(mounted)[1].props.onClick()
   assert.equal(dom.image(root), undefined)
   assert.equal(root.getAttribute('data-dsh-hud-running-whale'), null)
   assert.equal(dom.phrase(root), '深度求索中')
@@ -706,11 +692,11 @@ test('确认的 v4 默认启用：首次启动挂载全身动作，不写入偏�
   dom.tick()
   assert.equal(dom.image(root).getAttribute('data-action'), 'thinking')
   assert.match(dom.image(root).src, /^data:image\/webp;base64,/)
-  assert.equal(cubes(mounted)[4].props['aria-pressed'], true)
+  assert.equal(cubes(mounted)[2].props['aria-pressed'], true)
   assert.equal(mounted.windowStub.localStorage.getItem(storageKey), null)
   mounted.dispose()
 
-  for (const skin of ['off', 'plane', 'pulse', 'rotate', 'whale']) {
+  for (const skin of ['off', 'plane', 'whale']) {
     const existing = mountClient({ storageValues: { [storageKey]: skin } })
     const selected = cubes(existing).filter((button) => button.props['aria-pressed'])
     assert.equal(selected.length, 1)
@@ -803,7 +789,7 @@ test('白米饭系列六个动作均有双语文案，端饭看终端不冒充�
   mounted.dispose()
 })
 
-test('鲸鱼娘两行布局：上方用时、下方文案，图片在左，切回轮播仍为一行', () => {
+test('鲸鱼娘两行布局：上方用时、下方文案，图片在左，切到纸飞机轮播仍为一行', () => {
   const mounted = mountClient()
   const dom = runningDom(mounted)
   const root = dom.root('深度求索中，用时 39 分 5 秒 ···')
@@ -835,10 +821,10 @@ test('鲸鱼娘两行布局：上方用时、下方文案，图片在左，切�
   dom.image(root).onerror()
   assert.equal(root.getAttribute('data-dsh-hud-running-whale'), null)
   assert.equal(dom.phrase(root), '深度求索中', '图片失败不丢失文字列')
-  cubes(mounted)[3].props.onClick()
-  const rotateText = root.content.children[0]
+  cubes(mounted)[1].props.onClick()
+  const planeText = root.content.children[0]
   assert.deepEqual(
-    rotateText.children.map((child) => child.className),
+    planeText.children.map((child) => child.className),
     ['dshh-runPhrase', 'dshh-runTime'],
     '其他皮肤布局不受影响',
   )
@@ -1069,7 +1055,7 @@ test('等待解码时切换语言，提交使用最新文案，不重新加载�
   mounted.dispose()
 })
 
-test('纯轮播文案直接更新，不透明度闪烁，也不强制回流', () => {
+test('纸飞机轮播文案直接更新，不透明度闪烁，也不强制回流', () => {
   const mounted = mountClient({ storageValues: { [storageKey]: 'rotate' } })
   const dom = runningDom(mounted)
   const root = dom.root()
@@ -1158,6 +1144,107 @@ test('首次候选解码失败不吞官方图标，后续动作仍可加载', as
     assert.equal(dom.image(root).getAttribute('data-action'), 'context')
     assert.equal(dom.phrase(root), '正在翻上下文')
     assert.equal(root.getAttribute('data-dsh-hud-running-whale'), '')
+  } finally {
+    Date.now = originalNow
+    mounted.dispose()
+  }
+})
+
+test('旧呼吸光标与轮播偏好在首次读取时归入纸飞机，设置只显示三个选项', () => {
+  for (const legacy of ['pulse', 'rotate']) {
+    const mounted = mountClient({ storageValues: { [storageKey]: legacy } })
+    try {
+      const dom = runningDom(mounted)
+      const root = dom.root()
+      dom.tick()
+      const buttons = cubes(mounted)
+      assert.equal(buttons.length, 3)
+      assert.equal(buttons[1].props['aria-pressed'], true, legacy)
+      assert.equal(dom.phrase(root), '深度求索中')
+      assert.equal(dom.image(root), undefined)
+      assert.equal(dom.marked(root), true)
+      assert.equal(activeTickers(mounted).length, 1)
+      assert.ok(skinTag(mounted).textContent.includes('dshh-plane'))
+      assert.ok(!skinTag(mounted).textContent.includes('dshh-breathe'))
+      assert.ok(!skinTag(mounted).textContent.includes('dshh-blink'))
+      assert.equal(
+        mounted.windowStub.localStorage.getItem(storageKey),
+        legacy,
+        '读取不主动改写存储',
+      )
+      buttons[1].props.onClick()
+      assert.equal(
+        mounted.windowStub.localStorage.getItem(storageKey),
+        'plane',
+        '再次选择保存规范 id',
+      )
+      assert.equal(activeTickers(mounted).length, 1)
+    } finally {
+      mounted.dispose()
+    }
+  }
+})
+
+test('旧皮肤的跨窗口变更、focus 和轮询都规范化为同一纸飞机状态', () => {
+  const mini = createMiniReact()
+  const mounted = mountClient({ ReactImpl: mini.React })
+  const dom = runningDom(mounted)
+  const root = dom.root()
+  try {
+    dom.tick()
+    mini.mount(mounted.components['dsh-hud-running-skin'], { t: (key) => key })
+    for (const legacy of ['pulse', 'rotate']) {
+      mounted.windowStub.localStorage.setItem(storageKey, legacy)
+      mounted.dispatch('storage', { key: storageKey, newValue: legacy })
+      assert.deepEqual(picked(mini.current()), ['skin.plane'])
+      assert.equal(dom.image(root), undefined)
+      assert.equal(dom.marked(root), true)
+      const ticker = activeTickers(mounted)[0]
+      mounted.dispatch('focus')
+      mounted.intervals.find((item) => item.ms === 8000).callback()
+      assert.equal(activeTickers(mounted).length, 1)
+      assert.equal(activeTickers(mounted)[0], ticker, '规范化后的同皮肤不重复起节拍')
+      assert.deepEqual(picked(mini.current()), ['skin.plane'])
+    }
+  } finally {
+    mini.unmount()
+    mounted.dispose()
+  }
+})
+
+test('纸飞机同时保留图标动效、文案轮播和官方用时；多会话回退、官方开关仍安全', () => {
+  const mounted = mountClient({ storageValues: { [storageKey]: 'plane' } })
+  const dom = runningDom(mounted)
+  const root = dom.root('深度求索中，用时 39 分 5 秒 ···')
+  const originalNow = Date.now
+  let clock = 1000
+  Date.now = () => clock
+  try {
+    dom.tick()
+    assert.equal(dom.phrase(root), '深度求索中')
+    assert.equal(dom.time(root), '39 分 5 秒')
+    assert.equal(dom.image(root), undefined)
+    const css = skinTag(mounted).textContent
+    assert.ok(css.includes('animation:dshh-plane 2.6s'))
+    assert.ok(css.includes('prefers-reduced-motion:reduce'))
+    assert.ok(!css.includes('dshh-breathe'))
+    clock += 3200
+    dom.tick()
+    assert.equal(dom.phrase(root), '正在翻上下文')
+    assert.equal(dom.time(root), '39 分 5 秒')
+    const child = dom.root('深度求索中，用时 5 秒 ···')
+    dom.tick()
+    assert.equal(dom.marked(root), false)
+    assert.equal(dom.marked(child), false)
+    dom.roots.pop()
+    dom.tick()
+    assert.equal(dom.phrase(root), '深度求索中')
+    assert.equal(dom.marked(root), true)
+    cubes(mounted)[0].props.onClick()
+    assert.equal(dom.marked(root), false)
+    assert.equal(root.content.children.length, 0)
+    assert.equal(skinTag(mounted), undefined)
+    assert.equal(activeTickers(mounted).length, 0)
   } finally {
     Date.now = originalNow
     mounted.dispose()

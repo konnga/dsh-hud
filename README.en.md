@@ -37,7 +37,7 @@ For local development, point the profile at the checkout (host changes apply imm
 
 ## Thinking animation
 
-**Settings → General → Thinking animation** offers Official, Paper plane, Breathing cursor, Rotating copy and **Whale girl**. Whale girl is the default; existing saved selections are preserved and changes take effect immediately.
+**Settings → General → Thinking animation** offers Official, Paper plane and **Whale girl**. Paper plane includes tool-aware rotating phrases; saved Breathing cursor and Rotating copy selections map to Paper plane. Whale girl is the default; existing saved selections are preserved and changes take effect immediately.
 
 Whale girl uses 30 action poses linked to the current tool and a pool of 100 bilingual cues: pondering, reading, connecting clues, writing, typing, waiting for output, magnifier inspection, working with tools, a puzzled question mark, following a butterfly, puzzle pieces, thread, a toolbox, and six rice-themed poses such as eating, pondering with puffed cheeks and watching the terminal with a rice bowl. Phrases rotate every 3.2 seconds within an activity group, show the official elapsed time above the current phrase and follow the app language. Reduced motion stops same-group rotation while tool changes still update the display. Multiple running conversations fall back to the official display when attribution is ambiguous.
 
