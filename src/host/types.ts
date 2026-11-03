@@ -432,6 +432,19 @@ export interface HudProviderBalanceFailure {
   message: string | null
 }
 
+/** 已配置中转站的公开摘要；URL 不含 userinfo、query 或 fragment。 */
+export interface HudProviderList {
+  available: boolean
+  reason?: 'settings-unavailable' | 'settings-failed' | 'unsupported'
+  providers: Array<{
+    id: string
+    label: string
+    baseURL: string
+    token: { ref: string; configured: boolean } | null
+    key: { ref: string; configured: boolean } | null
+  }>
+}
+
 /** 提供方取数所需的两个事实（从设置里读出来，**不落盘、不外传**）。 */
 export interface HudProviderFacts {
   provider: string
@@ -651,7 +664,7 @@ export interface HudWebServer {
 
 /** 宿主 ctx 的**诚实最小接口**：本插件只用到 effect / inject / get / on / webServer。 */
 export interface HudContext {
-  effect(callback: () => (() => void) | void, label?: string): () => void
+  effect(callback: () => (() => void | Promise<void>) | void, label?: string): () => void
   inject(
     dependencies: string[],
     callback: (scope: HudInjectedScope) => (() => void) | void,

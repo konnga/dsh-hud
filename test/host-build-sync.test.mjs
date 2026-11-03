@@ -31,13 +31,15 @@ function moduleNames(dir, extension) {
 }
 
 test('src/host/**/*.ts 与 lib/host/**/*.js 文件集合一一对应（没有残留旧产物）', () => {
-  const sources = moduleNames(HOST_SRC, '.ts')
-  const artifacts = moduleNames(HOST_LIB, '.js')
-  assert.deepEqual(
-    artifacts,
-    sources,
-    '产物与源码的模块集合不一致：跑一下 `ppnpm run build`（产物要一起提交）',
-  )
+  for (const directory of ['host', 'shared']) {
+    const sources = moduleNames(path.join(ROOT, 'src', directory), '.ts')
+    const artifacts = moduleNames(path.join(ROOT, 'lib', directory), '.js')
+    assert.deepEqual(
+      artifacts,
+      sources,
+      `${directory} 产物与源码的模块集合不一致：跑一下 pnpm run build`,
+    )
+  }
 })
 
 test('lib/host/*.js 与 src/host/**/*.ts 同步（忘了 build 就该红）', () => {
@@ -55,25 +57,21 @@ test('lib/host/*.js 与 src/host/**/*.ts 同步（忘了 build 就该红）', ()
       )
     }
 
-    const builtDir = path.join(tempDir, 'host')
-    const builtFiles = readdirSync(builtDir)
-      .filter((name) => name.endsWith('.js'))
-      .sort()
-    assert.deepEqual(
-      moduleNames(builtDir, '.js'),
-      moduleNames(HOST_LIB, '.js'),
-      'tsc 产出的文件名与仓库里的产物不一致',
-    )
-
     const normalize = (text) => text.replace(/\r\n/g, '\n').replace(/\s+$/, '')
-    for (const name of builtFiles) {
-      const built = readFileSync(path.join(builtDir, name), 'utf8')
-      const committed = readFileSync(path.join(HOST_LIB, name), 'utf8')
-      assert.equal(
-        normalize(committed),
-        normalize(built),
-        `lib/host/${name} 与源码不同步：跑一下 \`pnpm run build\`（产物要一起提交）`,
-      )
+    for (const directory of ['host', 'shared']) {
+      const builtDir = path.join(tempDir, directory)
+      const committedDir = path.join(ROOT, 'lib', directory)
+      const builtFiles = readdirSync(builtDir)
+        .filter((name) => name.endsWith('.js'))
+        .sort()
+      assert.deepEqual(moduleNames(builtDir, '.js'), moduleNames(committedDir, '.js'))
+      for (const name of builtFiles) {
+        assert.equal(
+          normalize(readFileSync(path.join(committedDir, name), 'utf8')),
+          normalize(readFileSync(path.join(builtDir, name), 'utf8')),
+          `lib/${directory}/${name} 与源码不同步：跑一下 pnpm run build`,
+        )
+      }
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true })

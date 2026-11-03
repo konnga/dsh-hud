@@ -29,6 +29,7 @@ import type {
   HudProviderBalance,
   HudProviderBalanceFailure,
   HudProviderFacts,
+  HudProviderList,
 } from './types.js'
 
 /** 设置投影的缓存时长：用户改配置是低频动作，但改完应当很快生效。 */
@@ -72,6 +73,42 @@ export type ProviderBalanceOutcome =
       token?: HudProviderTokenState | null
     }
 
+export type ProviderKeyResult =
+  | { available: true; provider: string; apiKey: string }
+  | {
+      available: false
+      reason:
+        | 'unknown-provider'
+        | 'settings-unavailable'
+        | 'settings-failed'
+        | 'credentials-unavailable'
+        | 'not-configured'
+        | 'read-failed'
+        | 'unsupported'
+    }
+
+export type ProviderTokenResult =
+  { available: true; provider: string; accessToken: string } | { available: false; reason: string }
+
+export interface ProviderBalanceReader {
+  (sessionId: string | null, force?: boolean): Promise<ProviderBalanceOutcome>
+  listProviders(): Promise<HudProviderList>
+  revealKey(provider: string): Promise<ProviderKeyResult>
+  revealToken(provider: string): Promise<ProviderTokenResult>
+  readProvider(provider: string, force?: boolean): Promise<ProviderBalanceOutcome>
+}
+
+/** 展示地址只保留 HTTP(S) origin/path；绝不回显解析失败的原始字符串。 */
+export function publicProviderURL(value: string): string {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return ''
+    return url.origin + url.pathname
+  } catch {
+    return ''
+  }
+}
+
 /**
  * 建一个"按会话查余额"的读取器（每个插件实例一个，自己持有缓存）。
  *
@@ -82,7 +119,7 @@ export type ProviderBalanceOutcome =
 export function createProviderBalanceReader(
   ctx: HudContext,
   deps: ProviderFetchDeps,
-): (sessionId: string | null, force?: boolean) => Promise<ProviderBalanceOutcome> {
+): ProviderBalanceReader {
   /** 提供方 id → 最近一次结果（含"取不到"的原因，避免失败时也去炮击站点）。 */
   var cache = new Map<
     string,
@@ -91,17 +128,27 @@ export function createProviderBalanceReader(
   /** 设置投影缓存（`facts` 与取到的时刻）。 */
   var factsCache: { at: number; facts: Map<string, HudProviderFacts> } | null = null
 
+  var factsAvailable = false
+  var factsReason: 'settings-unavailable' | 'settings-failed' = 'settings-unavailable'
+
   /** 从设置读一次提供方连接事实（带短 TTL）。 */
-  function readFacts(): Map<string, HudProviderFacts> {
+  function readFacts(fresh = false): Map<string, HudProviderFacts> {
     var now = deps.now()
-    if (factsCache !== null && now - factsCache.at < FACTS_CACHE_MS) return factsCache.facts
+    if (!fresh && factsCache !== null && now - factsCache.at < FACTS_CACHE_MS)
+      return factsCache.facts
+    factsAvailable = false
+    factsReason = 'settings-unavailable'
     var settings = serviceOf<SettingsService>(ctx, 'settings')
     var facts = new Map<string, HudProviderFacts>()
     if (settings !== null) {
+      factsReason = 'settings-failed'
       try {
         // 只读 `baseURL` 与凭据引用名；关掉 secret 字段才拿得到的那些值我们一个都不碰。
-        var descriptors = settings.describe()
-        if (Array.isArray(descriptors)) facts = factsFromSettings(descriptors)
+        var descriptors = settings.describe({ redactSecrets: true })
+        if (Array.isArray(descriptors)) {
+          facts = factsFromSettings(descriptors)
+          factsAvailable = true
+        }
       } catch {
         facts = new Map()
       }
@@ -235,7 +282,7 @@ export function createProviderBalanceReader(
     return fetchUserBalance(facts, accessToken, userId, deps)
   }
 
-  return async function readProviderBalance(
+  async function readProviderBalance(
     sessionId: string | null,
     force?: boolean,
   ): Promise<ProviderBalanceOutcome> {
@@ -251,16 +298,30 @@ export function createProviderBalanceReader(
       return { ok: true, value: null, account: true }
     }
 
+    return readBalance(provider, force)
+  }
+
+  async function readBalance(
+    provider: string,
+    force?: boolean,
+    selectedFacts?: HudProviderFacts,
+  ): Promise<ProviderBalanceOutcome> {
     // `force` = 用户点了胶囊：跳过缓存。否则"我刚配好令牌，怎么还是旧数"这件事
     // 会持续一分钟 —— 而点胶囊本身就是"我怀疑这个数是旧的"那个动作。
     var cached = cache.get(provider)
-    if (force !== true && cached !== undefined && deps.now() - cached.at < PROVIDER_CACHE_MS) {
+    if (
+      force !== true &&
+      cached !== undefined &&
+      deps.now() - cached.at < PROVIDER_CACHE_MS &&
+      (selectedFacts === undefined ||
+        JSON.stringify(cached.facts) === JSON.stringify(selectedFacts))
+    ) {
       // token 状态**不进缓存**：刚配好令牌的那一刻它就该变，等一分钟是没法解释的行为。
       return await withToken(cached.outcome, cached.facts)
     }
 
     var known = readFacts()
-    var facts = known.get(provider)
+    var facts = selectedFacts ?? known.get(provider)
     if (facts === undefined) {
       // 没有连接事实就不知道它的令牌引用名，也就没有 token 状态可给 —— 直接回，
       // 也不进缓存（设置投影可能只是还没就绪，缓存一分钟反而延长了错误的寿命）。
@@ -288,6 +349,91 @@ export function createProviderBalanceReader(
     cache.set(provider, { at: deps.now(), outcome: outcome, facts: facts })
     return await withToken(outcome, facts)
   }
+
+  // 管理页只读已配置的 relay；不需要会话，更不写模型选择。
+  async function listProviders(): Promise<HudProviderList> {
+    var facts = readFacts(true)
+    var providers: HudProviderList['providers'] = []
+    for (var entry of facts.values()) {
+      if (entry.kind !== 'relay' || entry.provider === 'deepseek-account') continue
+      providers.push({
+        id: entry.provider,
+        label: entry.provider,
+        baseURL: publicProviderURL(entry.baseURL),
+        token: await tokenStateOf(entry),
+        key: await keyStateOf(entry),
+      })
+    }
+    return factsAvailable
+      ? { available: true, providers }
+      : { available: false, providers, reason: factsReason }
+  }
+
+  async function readProvider(provider: string, force?: boolean): Promise<ProviderBalanceOutcome> {
+    // 每次先确认实时配置仍包含此 id，删除/改址后不使用旧缓存、也不接受请求传入的 URL。
+    var facts = readFacts(true).get(provider)
+    if (!facts || facts.kind !== 'relay' || provider === 'deepseek-account') {
+      return { ok: false, failure: failureOf(null, null, 'unknown-provider'), token: null }
+    }
+    return readBalance(provider, force, facts)
+  }
+
+  /** Listing metadata never resolves API key values, even on old credentials services. */
+  async function keyStateOf(facts: HudProviderFacts): Promise<HudProviderTokenState | null> {
+    const ref = facts.apiKeyEnv
+    const credentials = serviceOf<CredentialsService>(ctx, 'credentials')
+    if (!ref || typeof credentials?.describe !== 'function') return null
+    try {
+      const info = await credentials.describe(ref)
+      return info && typeof info.configured === 'boolean'
+        ? { ref, configured: info.configured }
+        : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Explicit user reveal: resolve the current configured relay reference once, never cache/log it. */
+  async function revealKey(provider: string): Promise<ProviderKeyResult> {
+    const facts = readFacts(true).get(provider)
+    if (!factsAvailable) return { available: false, reason: factsReason }
+    if (!facts || facts.kind !== 'relay' || provider === 'deepseek-account')
+      return { available: false, reason: 'unknown-provider' }
+    const credentials = serviceOf<CredentialsService>(ctx, 'credentials')
+    if (!credentials || typeof credentials.resolve !== 'function')
+      return { available: false, reason: 'credentials-unavailable' }
+    if (!facts.apiKeyEnv) return { available: false, reason: 'not-configured' }
+    try {
+      const credential = await credentials.resolve(facts.apiKeyEnv)
+      if (!credential || typeof credential.value !== 'string' || credential.value === '')
+        return { available: false, reason: 'not-configured' }
+      return { available: true, provider: facts.provider, apiKey: credential.value }
+    } catch {
+      return { available: false, reason: 'read-failed' }
+    }
+  }
+
+  /** User-requested web token reveal, scoped to the current relay configuration. */
+  async function revealToken(provider: string): Promise<ProviderTokenResult> {
+    const facts = readFacts(true).get(provider)
+    if (!factsAvailable) return { available: false, reason: factsReason }
+    if (!facts || facts.kind !== 'relay' || provider === 'deepseek-account')
+      return { available: false, reason: 'unknown-provider' }
+    if (!facts.accessTokenEnv) return { available: false, reason: 'not-supported' }
+    const credentials = serviceOf<CredentialsService>(ctx, 'credentials')
+    if (!credentials || typeof credentials.resolve !== 'function')
+      return { available: false, reason: 'credentials-unavailable' }
+    try {
+      const credential = await credentials.resolve(facts.accessTokenEnv)
+      if (!credential || typeof credential.value !== 'string' || credential.value === '')
+        return { available: false, reason: 'not-configured' }
+      return { available: true, provider: facts.provider, accessToken: credential.value }
+    } catch {
+      return { available: false, reason: 'read-failed' }
+    }
+  }
+
+  return Object.assign(readProviderBalance, { listProviders, readProvider, revealKey, revealToken })
 
   /**
    * 给结论补上"这个提供方的后台凭据配了没"。
@@ -343,7 +489,7 @@ export function createProviderTokenWriter(
     var settings = serviceOf<SettingsService>(ctx, 'settings')
     if (settings === null) return null
     try {
-      var descriptors = settings.describe()
+      var descriptors = settings.describe({ redactSecrets: true })
       if (!Array.isArray(descriptors)) return null
       return factsFromSettings(descriptors).get(provider) ?? null
     } catch {

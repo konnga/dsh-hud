@@ -11,7 +11,9 @@
  * 那一行都会以 `cannot get property "webServer" without inject` 挂载失败。
  * 因此本插件自持路由，只借用 Connection 的信任判定。
  *
- * 端点（全部只读，不写 index / 工作区 / 配置）：
+ * 端点（Git/会话查询只读；provider-credential 仅写指定后台凭据）：
+ *   - `provider-list {}` → 已配置中转站的公开摘要（脱敏 URL、令牌配置状态）。
+ *   - `provider-detail-balance { provider, force? }` → 按已配置中转站 id 查余额；不切换模型。
  *   - `status { cwd }` → 仓库事实：当前分支（或 detached）、ahead/behind、脏状态、
  *     按类型分组的改动计数，以及改动清单（porcelain-v2 的两个字母 + 路径）。
  *   - `diff { cwd, path, origPath? }` → 一个改动文件的**两侧** unified diff
@@ -159,8 +161,13 @@ import {
   readBody,
   sendJson,
   setProviderBalanceReader,
+  setProviderManagementReader,
   setProviderTokenWriter,
+  setExpressionPackService,
 } from './rpc.js'
+import { createExpressionPackService } from './expression-packs.js'
+import { registerRunningActivity } from './running-activity.js'
+export { createExpressionPackService } from './expression-packs.js'
 export { CHANNEL } from './rpc.js'
 
 import { createProviderBalanceReader, createProviderTokenWriter } from './provider-balance.js'
@@ -223,11 +230,13 @@ export const inject = ['webServer', 'connection']
  */
 export function apply(ctx: HudContext): void {
   rememberContext(ctx)
+  ctx.effect(() => registerRunningActivity(ctx), 'dsh-hud: running activity')
   trackSessionChanges(ctx)
   // 「按当前会话的模型来源查余额」：读取器要 ctx（设置/凭据服务），端点表拿不到 ctx，
   // 所以在这里装进去；卸载时清掉，避免下一个实例拿到悬空的 ctx。
   const reader = createProviderBalanceReader(ctx, defaultFetchDeps())
   setProviderBalanceReader(reader)
+  setProviderManagementReader(reader)
   // 「把后台凭据写进凭据存储」的写入器：胶囊上的设置面板调它，用户不必去改
   // `~/.dsh/.credentials.yaml`（改那个文件手滑一个缩进就整份凭据读不出来）。
   const tokenWriter = createProviderTokenWriter(ctx)
@@ -235,10 +244,19 @@ export function apply(ctx: HudContext): void {
   ctx.effect(
     () => () => {
       setProviderBalanceReader(null)
+      setProviderManagementReader(null)
       setProviderTokenWriter(null)
     },
     'dsh-hud: provider balance reader',
   )
+  const expressions = createExpressionPackService(ctx)
+  ctx.effect(() => {
+    setExpressionPackService(expressions)
+    return async () => {
+      setExpressionPackService(null)
+      await expressions.dispose()
+    }
+  }, 'dsh-hud: expression packs')
   ctx.effect(
     () =>
       ctx.webServer.register({

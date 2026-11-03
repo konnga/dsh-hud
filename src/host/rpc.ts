@@ -1,3 +1,5 @@
+import type { ExpressionPackService } from './expression-packs.js'
+import { EXPRESSION_LIMITS } from '../shared/expression-packs.js'
 import { validateCommitSha, validateCwd, validateDiffPath } from './git.js'
 import { readImagePair } from './image.js'
 import {
@@ -16,7 +18,11 @@ import {
   readSessionTime,
   readSessionTools,
 } from './session.js'
-import type { ProviderBalanceOutcome, ProviderTokenWriteResult } from './provider-balance.js'
+import type {
+  ProviderBalanceOutcome,
+  ProviderBalanceReader,
+  ProviderTokenWriteResult,
+} from './provider-balance.js'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { HudContext, HudRpcEnvelope } from './types.js'
 /**
@@ -25,6 +31,7 @@ import type { HudContext, HudRpcEnvelope } from './types.js'
 
 export const CHANNEL = '/dsh-hud-rpc'
 export const MAX_BODY_BYTES = 256 * 1024
+export const EXPRESSION_BODY_BYTES = Math.ceil(EXPRESSION_LIMITS.maxZipBytes / 3) * 4 + 512 * 1024
 /** 一次最多给多少个改动文件算"这一版"的签名（超出的那些只显示"未审"，不报错）。 */
 export const REVIEW_SIGNATURE_MAX = 200
 
@@ -44,6 +51,29 @@ type EndpointHandler = (args: unknown) => Promise<unknown>
  */
 let providerBalanceReader:
   ((sessionId: string | null, force?: boolean) => Promise<ProviderBalanceOutcome>) | null = null
+
+/** 管理列表与按 id 查账共用同一读取器实例（也共用余额缓存）。 */
+let providerManagementReader: ProviderBalanceReader | null = null
+export function setProviderManagementReader(reader: ProviderBalanceReader | null): void {
+  providerManagementReader = reader
+}
+
+/** 两种查询统一序列化，禁止携带内部连接事实或凭据。 */
+function providerOutcome(outcome: ProviderBalanceOutcome): unknown {
+  const token = outcome.token ?? null
+  if (outcome.ok) {
+    if (outcome.value === null) return { available: true, account: true, token }
+    return { available: true, balance: outcome.value, token }
+  }
+  return {
+    available: false,
+    provider: outcome.failure.provider,
+    kind: outcome.failure.kind,
+    reason: outcome.failure.reason,
+    message: outcome.failure.message,
+    token,
+  }
+}
 
 /**
  * 「把后台凭据写进凭据存储」的写入器。
@@ -68,8 +98,46 @@ export function setProviderTokenWriter(
   providerTokenWriter = writer
 }
 
-/** 端点表：全部只读；新增端点时在这里登记。 */
+/** Host-owned expression-pack operations; shared with future agent tools. */
+let expressionPacks: ExpressionPackService | null = null
+export function setExpressionPackService(service: ExpressionPackService | null): void {
+  expressionPacks = service
+}
+function packsService(): ExpressionPackService {
+  if (!expressionPacks)
+    throw Object.assign(new Error('Expression-pack storage is unavailable'), {
+      code: 'expression-unavailable',
+    })
+  return expressionPacks
+}
+
+/** Endpoint handlers share the same Host business service. */
 export const ENDPOINTS: Record<string, EndpointHandler> = {
+  async 'expression-packs-list'() {
+    return expressionPacks
+      ? expressionPacks.list()
+      : { available: false, reason: 'storage-unavailable', packs: [], selectedSkin: null }
+  },
+  async 'expression-packs-get'(args) {
+    return packsService().get(toArgs(args).id)
+  },
+  async 'expression-packs-save'(args) {
+    const input = toArgs(args)
+    return packsService().save(input.draft, input.id, input.expectedRevision)
+  },
+  async 'expression-packs-delete'(args) {
+    const input = toArgs(args)
+    return packsService().delete(input.id, input.expectedRevision)
+  },
+  async 'expression-packs-select'(args) {
+    return packsService().select(toArgs(args).skin)
+  },
+  async 'expression-packs-import'(args) {
+    return packsService().import(toArgs(args).base64)
+  },
+  async 'expression-packs-export'(args) {
+    return packsService().export(toArgs(args).id)
+  },
   async status(args) {
     const input = toArgs(args)
     const checked = validateCwd(input.cwd)
@@ -106,22 +174,62 @@ export const ENDPOINTS: Record<string, EndpointHandler> = {
       }
     }
     const outcome = await providerBalanceReader(sessionId, input.force === true)
-    // `token` 顶层透传：客户端据此决定点胶囊是"弹设置面板"还是"刷新一下"。
-    // 只给引用名与是否已配 —— 令牌本身永远不出宿主。
-    const token = outcome.token ?? null
-    if (outcome.ok === true) {
-      // `account: true` = 这个提供方的账本就是 DSH 账号那一路，客户端自己去取。
-      if (outcome.value === null) return { available: true, account: true, token }
-      return { available: true, balance: outcome.value, token }
+    return providerOutcome(outcome)
+  },
+
+  /** 列出当前配置中的中转站；不返回凭据值、不调用外部网络。 */
+  async 'provider-list'() {
+    if (providerManagementReader === null)
+      return { available: false, providers: [], reason: 'unsupported' }
+    return providerManagementReader.listProviders()
+  },
+
+  /** User-requested API key reveal; caller cannot select an arbitrary credential reference. */
+  async 'provider-key'(args) {
+    if (
+      providerManagementReader === null ||
+      typeof providerManagementReader.revealKey !== 'function'
+    )
+      return { available: false, reason: 'unsupported' }
+    const input = toArgs(args)
+    const provider = typeof input.provider === 'string' ? input.provider : ''
+    try {
+      return await providerManagementReader.revealKey(provider)
+    } catch {
+      return { available: false, reason: 'read-failed' }
     }
-    return {
-      available: false,
-      provider: outcome.failure.provider,
-      kind: outcome.failure.kind,
-      reason: outcome.failure.reason,
-      message: outcome.failure.message,
-      token,
+  },
+
+  /** Explicit web token reveal, with the same authentication fence as all HUD requests. */
+  async 'provider-token'(args) {
+    if (!providerManagementReader || typeof providerManagementReader.revealToken !== 'function')
+      return { available: false, reason: 'unsupported' }
+    const input = toArgs(args)
+    const provider = typeof input.provider === 'string' ? input.provider : ''
+    try {
+      return await providerManagementReader.revealToken(provider)
+    } catch {
+      return { available: false, reason: 'read-failed' }
     }
+  },
+
+  /** 仅接受已配置的 provider id；额外 URL/会话参数均不参与选址或模型选择。 */
+  async 'provider-detail-balance'(args) {
+    if (providerManagementReader === null) {
+      return {
+        available: false,
+        provider: null,
+        kind: null,
+        reason: 'unsupported',
+        message: null,
+        token: null,
+      }
+    }
+    const input = toArgs(args)
+    const provider = typeof input.provider === 'string' ? input.provider : ''
+    return providerOutcome(
+      await providerManagementReader.readProvider(provider, input.force === true),
+    )
   },
 
   /**
@@ -300,10 +408,14 @@ export function sendJson(res: ServerResponse, status: number, body: HudRpcEnvelo
 export function readBody(req: IncomingMessage, limit: number): Promise<string> {
   return new Promise((resolve, reject) => {
     let size = 0
+    let exceeded = false
     const chunks: Buffer[] = []
     req.on('data', (chunk: Buffer) => {
+      if (exceeded) return
       size += chunk.length
       if (size > limit) {
+        exceeded = true
+        chunks.length = 0
         reject(Object.assign(new Error('payload too large'), { code: 'too-large' }))
         return
       }
@@ -406,6 +518,9 @@ export async function handleRequest(
     return
   }
   const endpoint = pathname === CHANNEL ? '' : pathname.slice(CHANNEL.length + 1)
+  // Secrets revealed on demand must never enter browser/proxy caches.
+  if (endpoint === 'provider-key' || endpoint === 'provider-token')
+    res.setHeader('cache-control', 'no-store')
   if (!endpoint || endpoint.includes('/')) {
     res.statusCode = 404
     res.end()
@@ -414,7 +529,11 @@ export async function handleRequest(
 
   let raw
   try {
-    raw = await readBody(req, MAX_BODY_BYTES)
+    const limit =
+      endpoint === 'expression-packs-save' || endpoint === 'expression-packs-import'
+        ? EXPRESSION_BODY_BYTES
+        : MAX_BODY_BYTES
+    raw = await readBody(req, limit)
   } catch (error) {
     res.statusCode = errorCodeOf(error, '') === 'too-large' ? 413 : 400
     res.end()
