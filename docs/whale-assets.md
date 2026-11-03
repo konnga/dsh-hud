@@ -8,9 +8,10 @@
 | `src/client/assets/cyber-whale-girl/*.webp` | 赛博鲸鱼娘的 30 张 224px 无损透明 WebP；蓝发、耳机、工装与完整鲸尾 | 进 Git；构建后嵌入 JS |
 | `src/client/assets/longdress-whale-girl/*.webp` | 长裙鲸鱼娘的 9 张 224px 无损透明 WebP；覆盖思考、读写、搜索与趣味动作 | 进 Git；构建后嵌入 JS |
 | `src/client/running-cues.ts` | 中英文文案及动作映射 | 进 Git |
-| `src/client/whale-assets.ts`、`src/client/cyber-whale-assets.ts` | 两套 WebP 分别转成 data URL 的生成模块 | Git 忽略；自动生成 |
+| `src/client/whale-assets.ts`、`src/client/cyber-whale-assets.ts`、`src/client/longdress-whale-assets.ts` | 三套 WebP 分别转成 data URL 的生成模块 | Git 忽略；自动生成 |
 | `lib/client.js` | DSH 实际加载的构建产物，已包含图片数据 | 沿用项目构建产物约定 |
-| `docs/images/whale-girl-preview.webp`、`docs/images/cyber-whale-girl-preview.webp` | README 的两套独立展示图 | 进 Git / 发布包 |
+| `docs/images/whale-girl-preview.webp`、`docs/images/cyber-whale-girl-preview.webp` | 两套角色的动作总览图（README 不再展示，仍留作素材档案） | 进 Git / 发布包 |
+| `docs/images/chibi-running.webp`、`docs/images/longdress-running.webp`、`docs/images/skin-picker.webp`、`docs/images/turn-duration.webp` | README 用的实拍效果图（运行中、皮肤选择、轮尾耗时） | 进 Git / 发布包 |
 | `docs/images/whale-girl/` | 本地讨论、参考图、原始 API 输出、多尺寸导出、交互预览与检查工具 | 整目录 Git 忽略；不进发布包 |
 
 运行与构建都不读取 `docs/images/whale-girl/`。删除或缺少本地讨论目录，不影响干净检出的构建、类型检查和测试。无需 Python、生图服务或 API 密钥。
