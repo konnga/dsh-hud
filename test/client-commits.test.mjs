@@ -335,6 +335,7 @@ test('提交明细（store）：点一行 → 取这次提交 → 自动打开�
         'session-statuses',
         'session-tools',
         'provider-balance',
+        'expression-packs-list',
       ].includes(call.endpoint),
   )
   assert.deepEqual(

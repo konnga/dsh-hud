@@ -18,17 +18,19 @@
     "LICENSE",
     "docs/images/*.webp",
     "docs/running-text.md",
-    "docs/whale-assets.md"
+    "docs/whale-assets.md",
+    "docs/expression-packs.md",
+    "docs/expression-packs/*.zip"
   ],
   "scripts": {
-    "test": "node scripts/generate-whale-assets.mjs && tsc -p tsconfig.json && tsc -p tsconfig.host.json --noEmit && node --test test/*.test.mjs",
-    "build": "node scripts/generate-whale-assets.mjs && tsc -p tsconfig.host.json && rolldown -c rolldown.config.mjs",
-    "typecheck": "node scripts/generate-whale-assets.mjs && tsc -p tsconfig.json && tsc -p tsconfig.host.json --noEmit",
+    "test": "node scripts/generate-whale-assets.mjs && node scripts/generate-cyber-whale-assets.mjs && node scripts/generate-longdress-whale-assets.mjs && tsc -p tsconfig.json && tsc -p tsconfig.host.json --noEmit && node --test test/*.test.mjs",
+    "build": "node scripts/generate-whale-assets.mjs && node scripts/generate-cyber-whale-assets.mjs && node scripts/generate-longdress-whale-assets.mjs && tsc -p tsconfig.host.json && rolldown -c rolldown.config.mjs",
+    "typecheck": "node scripts/generate-whale-assets.mjs && node scripts/generate-cyber-whale-assets.mjs && node scripts/generate-longdress-whale-assets.mjs && tsc -p tsconfig.json && tsc -p tsconfig.host.json --noEmit",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"rolldown.config.mjs\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"rolldown.config.mjs\"",
     "tag": "node scripts/check-release.mjs --create",
     "prepublishOnly": "pnpm run build && pnpm test && node scripts/check-release.mjs",
-    "assets:generate": "node scripts/generate-whale-assets.mjs"
+    "assets:generate": "node scripts/generate-whale-assets.mjs && node scripts/generate-cyber-whale-assets.mjs && node scripts/generate-longdress-whale-assets.mjs"
   },
   "keywords": [
     "dsh",
@@ -120,5 +122,9 @@
     "prettier": "^3.9.10",
     "rolldown": "^1.2.14",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "zod": "^4.6.7"
   }
 }

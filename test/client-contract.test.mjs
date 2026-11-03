@@ -22,13 +22,13 @@ test('客户端插件面声明 apply 与三个硬依赖服务', () => {
   assert.deepEqual(exported.inject, ['slots', 'connection', 'locale'])
 })
 
-test('apply 注册八个座位：Git 胶囊（含计时与工具两枚）、悬停气泡、令牌面板、面板、轮尾图片条、⋯ 菜单摘要、悬停详情、思考中动画设置行', () => {
+test('apply 注册九个座位：Git 胶囊（含计时与工具两枚）、悬停气泡、令牌面板、面板、轮尾图片条、⋯ 菜单摘要、悬停详情、思考中动画设置行', () => {
   const { registrations } = mountClient()
 
   assert.equal(
     registrations.length,
-    8,
-    '应当注册八条座位 —— 工具与计时胶囊都在 Git 那一行里，不另注册',
+    9,
+    '应当注册九条座位 —— 工具与计时胶囊都在 Git 那一行里，不另注册',
   )
   const byId = Object.fromEntries(registrations.map((entry) => [entry.options.id, entry.options]))
   assert.deepEqual(Object.keys(byId).sort(), [
@@ -38,6 +38,7 @@ test('apply 注册八个座位：Git 胶囊（含计时与工具两枚）、悬�
     'dsh-hud-running-skin',
     'dsh-hud-session-hover',
     'dsh-hud-session-menu',
+    'dsh-hud-settings',
     'dsh-hud-token-panel',
     'dsh-hud-turn-images',
   ])
@@ -206,14 +207,14 @@ test('自有样式表打上 DSH 的所有权标记，且被 HMR 记账删掉后�
 })
 
 test('运行状态换皮表：各皮肤按加载条件隐藏官方图标，动效有对应 keyframes', () => {
-  for (const id of ['plane', 'whale']) {
+  for (const id of ['whale', 'cyber-whale', 'longdress-whale']) {
     const mounted = mountClient({ storageValues: { 'dsh-hud:running-skin': id } })
     const skin = mounted.styles.find(
       (element) => element.attributes['data-dsh-hud'] === 'running-skin',
     )
     const css = skin.textContent
-    if (id === 'whale') {
-      // 默认彩色图只在成功加载后隐藏整个官方图标，失败时两个子层都保留。
+    {
+      // 彩色图只在成功加载后隐藏整个官方图标，失败时两个子层都保留。
       assert.ok(
         css.includes(
           '[data-chat-running][data-dsh-hud-running-whale] [class*="_runningIcon"]{display:none}',
@@ -222,9 +223,6 @@ test('运行状态换皮表：各皮肤按加载条件隐藏官方图标，动�
       )
       assert.ok(!css.includes('[class*="_runningIcon"]>span'), '不能提前藏掉官方回退图标')
       assert.ok(!css.includes('mask:'), '彩色人物使用 img 而不是单色 mask')
-    } else {
-      assert.ok(css.includes('[class*="_runningIcon"]>span'), '藏 APNG 那层')
-      assert.ok(css.includes('[class*="_runningIcon"]>svg'), '藏静态 SVG 兜底')
     }
     assert.match(css, /@media\s*\(prefers-reduced-motion:reduce\)/)
     const used = [...css.matchAll(/animation:\s*(dshh-[a-z-]+)/g)].map((match) => match[1])

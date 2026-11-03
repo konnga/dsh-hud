@@ -69,7 +69,7 @@ function amountOf(value: unknown): string | null {
 }
 
 /** 端点答复 → 快照；形状不对回 `null`（当作"读不到"）。 */
-function balanceOf(payload: ProviderBalancePayload): HudProviderBalance | null {
+export function balanceOf(payload: ProviderBalancePayload): HudProviderBalance | null {
   if (payload.available !== true || payload.account === true) return null
   var raw = (payload as { balance?: unknown }).balance
   if (raw === null || typeof raw !== 'object') return null

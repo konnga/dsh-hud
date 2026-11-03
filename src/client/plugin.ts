@@ -21,6 +21,11 @@ import { CSS } from './styles.js'
 import { HudDockPill } from './components/dock-pill.js'
 import { HudFloatingPanel } from './components/floating-panel.js'
 import { PillTip } from './components/pill-tip.js'
+import { createRelayDirectory } from './relay-directory.js'
+import { createExpressionPacks, configureExpressionPackStore } from './expression-packs.js'
+import { bindExpressionPackRuntime } from './expression-pack-runtime.js'
+import { SettingsPanel } from './components/settings-panel.js'
+import { getHudSettings, subscribeHudSettings, watchHudSettings } from './hud-settings.js'
 import { SkinRow } from './components/skin-row.js'
 import { TokenPanel } from './components/token-panel.js'
 import { SessionMenuSummary, SessionRowHoverChip } from './components/sidebar.js'
@@ -38,8 +43,9 @@ import {
   probe,
 } from './shared.js'
 import { watchModelSelection } from './model-watch.js'
-import { ensureRunningSkin, watchRunningSkin } from './running-skin.js'
+import { ensureRunningSkin, watchRunningSkin, isRunningSkinId, setSkin } from './running-skin.js'
 import { configureRunningText, refreshRunningText } from './running-text.js'
+import { watchRunningActivity } from './running-activity.js'
 import { createStore } from './store/index.js'
 import type { StoreContext } from './store/types.js'
 import { cssChipsGap, ensureStyles } from './styles-apply.js'
@@ -119,14 +125,37 @@ export function apply(ctx: HudPluginContext): void {
   })
 
   var store = createStore(ctx)
-
-  // 先接工具与 locale，再由统一皮肤入口控制样式、轮播与设置选中态。
+  var directory = createRelayDirectory(ctx.connection)
+  var packs = createExpressionPacks(ctx.connection)
   ctx.effect(function () {
+    var unconfigure = configureExpressionPackStore(packs)
+    return function () {
+      unconfigure()
+      packs.dispose()
+    }
+  }, 'dsh-hud: expression packs')
+
+  // Session projection + live stream drive poses. The DOM timer only copies elapsed time.
+  ctx.effect(function () {
+    var activity = watchRunningActivity(ctx, store, refreshRunningText)
     var dispose = configureRunningText({
-      readTool: function () {
-        var snapshot = store.getSnapshot()
-        var active = snapshot.tools ? snapshot.tools.active : null
-        return active ? active.name : null
+      // Before the Host half reloads its projection, fall back to the read-only tool
+      // snapshot: an actual running tool is a real fact, not a placeholder.
+      readActivity: function () {
+        var projected = activity.read()
+        if (projected !== null) return projected
+        var tools = store.getSnapshot().tools
+        var active = tools && tools.active ? tools.active : null
+        if (active === null) return null
+        return {
+          sessionId: store.getSnapshot().sessionId || undefined,
+          key: 'tools:' + String(active.callId),
+          phase: 'tool',
+          toolName: active.name,
+          attemptId: null,
+          turn: 0,
+          step: 0,
+        }
       },
       resolveText: function (text) {
         if (typeof ctx.locale.resolveText === 'function') return ctx.locale.resolveText(text)
@@ -136,11 +165,10 @@ export function apply(ctx: HudPluginContext): void {
           : text.zh
       },
     })
-    var unsubscribeStore = store.subscribe(refreshRunningText)
     var unsubscribe = ctx.locale.subscribe ? ctx.locale.subscribe(refreshRunningText) : null
     return function () {
       if (unsubscribe) unsubscribe()
-      unsubscribeStore()
+      activity.dispose()
       dispose()
     }
   }, 'dsh-hud: running text')
@@ -148,6 +176,26 @@ export function apply(ctx: HudPluginContext): void {
   ctx.effect(function () {
     return watchRunningSkin()
   }, 'dsh-hud: running skin')
+
+  ctx.effect(function () {
+    return bindExpressionPackRuntime(packs)
+  }, 'dsh-hud: expression playback')
+
+  ctx.effect(function () {
+    var preferences = getHudSettings().preferences
+    var unsubscribe = subscribeHudSettings(function () {
+      var next = getHudSettings().preferences
+      // 面板开合不重置轮播，不取消正在解码的图片。
+      if (next === preferences) return
+      preferences = next
+      ensureRunningSkin()
+    })
+    var unwatch = watchHudSettings()
+    return function () {
+      unsubscribe()
+      unwatch()
+    }
+  }, 'dsh-hud: display settings')
 
   // 起手留一行：诊断里**有没有这一行**就足以区分"客户端半压根没加载"与"加载了但
   // 哪一环没接上"（这一行由 apply 发，与后面的投影/名单无关）。
@@ -299,6 +347,27 @@ export function apply(ctx: HudPluginContext): void {
         },
       },
       HudFloatingPanel,
+    )
+  })
+
+  ctx.slots.inject('shell.overlay', function () {
+    return ctx.slots.register(
+      {
+        name: 'shell.overlay',
+        id: 'dsh-hud-settings',
+        order: 30,
+        locale: NS,
+        inject: function () {
+          return {
+            directory: directory,
+            packs: packs,
+            onSelectPack: function (skin: string) {
+              if (isRunningSkinId(skin)) setSkin(skin)
+            },
+          }
+        },
+      },
+      SettingsPanel,
     )
   })
 

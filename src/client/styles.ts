@@ -1,3 +1,5 @@
+import { EXPRESSION_PACK_STYLES } from './expression-pack-styles.js'
+
 /**
  * 面板与胶囊的样式表。
  *
@@ -10,6 +12,8 @@
  * 不碰 document.body、window 或产品的 DOM 选择器。
  */
 export const CSS = [
+  EXPRESSION_PACK_STYLES,
+
   // dock 座位给的是整栏宽的一行，而输入卡片有自己的最大宽度并居中
   // （--dsh-composer-card-max-width）。外层容器复刻框架自带 dock 占位元素
   // （队列公告）的几何，胶囊才会真正贴在输入卡片上方左端，而不是飘到栏的最左。
@@ -25,6 +29,90 @@ export const CSS = [
   'background:var(--dsw-alias-bg-layer-1,transparent);color:var(--dsw-alias-label-secondary,#8a8f98);',
   'cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
   '.dshh-pill:hover{color:var(--dsw-alias-label-primary,#e5e7eb);border-color:var(--dsw-alias-border-l2,rgba(127,127,127,0.45));}',
+  '.dshh-settingsPill{flex:none;padding:4px 8px;overflow:visible;}',
+  '.dshh-settingsPill[data-active]{color:var(--dsw-alias-brand-primary,#4b8bf5);}',
+  '.dshh-settingsPill:focus-visible,.dshh-settingsPanel :focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4b8bf5);outline-offset:3px;}',
+  '.dshh-settingsBackdrop{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.32);}',
+  '.dshh-settingsPanel{box-sizing:border-box;width:480px;max-width:100%;max-height:calc(100dvh - 40px);overflow:auto;padding:20px 24px;',
+  'background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#2c2c2e));color:var(--dsw-alias-label-primary,#e5e7eb);',
+  'border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.25));border-radius:16px;box-shadow:0 16px 64px rgba(0,0,0,.28);font-size:14px;line-height:1.5;}',
+  '.dshh-settingsHead{display:flex;align-items:center;justify-content:space-between;gap:12px;}',
+  '.dshh-settingsHead h2{margin:0;font-size:18px;font-weight:600;}',
+  '.dshh-settingsClose{display:inline-flex;padding:6px;border:0;border-radius:6px;background:transparent;color:inherit;cursor:pointer;}',
+  '.dshh-settingsClose:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12));}',
+  '.dshh-settingsPanel .dshh-skinCube{flex:1;min-width:0;padding:12px 6px;font-size:13px;}',
+  // 分组之间才画线：分组的下边框若一直画，最后那一组就会和 footer 的上边框贴成 2px 的粗线。
+  '.dshh-settingsGroup{padding:16px 0;}',
+  '.dshh-settingsGroup+.dshh-settingsGroup{border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.25));}',
+  '.dshh-settingsGroup h3{margin:0;font-size:14px;font-weight:500;}',
+  '.dshh-settingsGroupHead,.dshh-relayHead{display:flex;align-items:center;justify-content:space-between;gap:12px;}',
+  '.dshh-relayNote{margin:4px 0;font-size:12px;color:var(--dsw-alias-label-secondary,#8a8f98);overflow-wrap:anywhere;}',
+  '.dshh-relayQuery{margin:6px 0;padding:3px 10px;font:inherit;font-size:12px;line-height:1.6;',
+  'color:var(--dsw-alias-brand-primary-new-colorprimary-new-color,#4176e6);',
+  'background:transparent;border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.25));',
+  'border-radius:999px;cursor:pointer;}',
+  '.dshh-relayQuery:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12));',
+  'border-color:var(--dsw-alias-border-l2,rgba(127,127,127,.45));}',
+  '.dshh-relayQuery:focus-visible{outline:2px solid var(--dsw-alias-brand-primary-new-colorprimary-new-color,#4176e6);',
+  'outline-offset:2px;}',
+  '.dshh-relayList{list-style:none;margin:10px 0 0;padding:0;max-height:260px;overflow:auto;overscroll-behavior:contain;}',
+  '.dshh-relay{padding:10px 0;border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.25));}',
+  '.dshh-relayIdentity{min-width:0;overflow-wrap:anywhere;}',
+  '.dshh-relayIdentity strong{font-size:13px;font-weight:500;}',
+  '.dshh-relaySection{padding:8px 0;}',
+  '.dshh-relayToolbar{display:flex;justify-content:flex-end;}',
+  '.dshh-relayAction{position:relative;flex:none;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:0;border-radius:6px;padding:6px;background:transparent;color:var(--dsw-alias-label-secondary,#8a8f98);cursor:pointer;}',
+  '.dshh-relayAction::after{content:attr(data-tooltip);position:absolute;right:0;top:calc(100% + 4px);z-index:2;max-width:220px;width:max-content;white-space:normal;overflow-wrap:anywhere;padding:4px 7px;border-radius:5px;background:var(--dsw-specific-menu,#2c2c2e);color:var(--dsw-alias-label-primary,#e5e7eb);border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.25));font-size:11px;line-height:1.4;pointer-events:none;opacity:0;visibility:hidden;}',
+  '.dshh-relayAction:hover::after,.dshh-relayAction:focus-visible::after{opacity:1;visibility:visible;}',
+  '.dshh-relayAction [data-relay-icon=loading]{animation:dshh-relay-spin 1s linear infinite;}',
+  '.dshh-relayAction [data-relay-icon=check]{color:var(--dsw-alias-state-success-primary,#22c55e);}',
+  '@keyframes dshh-relay-spin{to{transform:rotate(360deg)}}',
+  '@media(prefers-reduced-motion:reduce){.dshh-relayAction [data-relay-icon=loading]{animation:none}}',
+  '.dshh-relayAddress{display:flex;align-items:center;gap:8px;min-width:0;}',
+  '.dshh-relayURL{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--dsw-alias-label-secondary,#8a8f98);}',
+  '.dshh-relayAction:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12));}',
+  '.dshh-relayAction:disabled{opacity:.5;cursor:default;}',
+  '.dshh-relayReadings{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;',
+  'margin-top:8px;font-size:12px;line-height:1.6;font-variant-numeric:tabular-nums;}',
+  // Readings sit in a flex row; the note variant must not bring its own vertical margin.
+  '.dshh-relayReadings .dshh-relayNote,.dshh-relayReadings .dshh-relayReading{margin:0;',
+  'font-size:inherit;line-height:inherit;}',
+  '.dshh-settingsTabs{display:flex;gap:4px;margin-top:16px;padding:3px;border-radius:8px;background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.1));}',
+  '.dshh-settingsTabs [role=tab]{flex:1;font:inherit;font-size:13px;padding:7px 12px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#8a8f98);cursor:pointer;}',
+  '.dshh-settingsTabs [aria-selected=true]{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.18));color:var(--dsw-alias-label-primary,#e5e7eb);}',
+  '.dshh-settingsPanel [role=tabpanel][hidden]{display:none;}',
+  '.dshh-relayKey{display:flex;align-items:center;gap:8px;margin-top:8px;}',
+  '.dshh-relaySecret{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;font-size:12px;user-select:text;}',
+  '.dshh-settingsFields{padding:8px 0;}',
+  '.dshh-settingRow{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:46px;}',
+  // Native select arrows are pinned to the select's own right edge, so padding-right only
+  // moves the text. The visible box therefore lives on the wrapper: the select keeps the
+  // untouched browser arrow and sits 10px inside the bordered container.
+  '.dshh-selectWrap{display:inline-flex;box-sizing:border-box;min-width:0;padding-right:10px;',
+  'background:var(--dsw-alias-bg-layer-1,transparent);',
+  'border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.25));border-radius:6px;}',
+  '.dshh-selectWrap:focus-within{border-color:var(--dsw-alias-brand-primary-new-colorprimary-new-color,#4176e6);',
+  'box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-brand-primary-new-colorprimary-new-color,#4176e6) 30%,transparent);}',
+  '.dshh-settingRow select{font:inherit;padding:5px 0 5px 8px;color:inherit;background:transparent;',
+  'border:0;border-radius:6px;cursor:pointer;}',
+  '.dshh-settingRow select option{background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2,#2c2c2e));color:var(--dsw-alias-label-primary,#e5e7eb);}',
+  // DSH brand-primary is near-white in dark mode: use its blue token for ON,
+  // a contrasting track for OFF, and explicit state text as a non-color cue.
+  '.dshh-settingsPanel .dshh-settingsSwitch{appearance:none;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:8px;flex:0 0 76px;width:76px;height:32px;min-height:0;margin:0;padding:2px;border:0;border-radius:6px;background:transparent;box-shadow:none;cursor:pointer;line-height:1;}',
+  '.dshh-settingsSwitch::before,.dshh-settingsSwitch::after{content:none;}',
+  '.dshh-settingsPanel .dshh-switchTrack{box-sizing:border-box;position:relative;display:block;flex:none;width:40px;height:22px;border:1px solid #64748b;border-radius:999px;background:#4b5563;transition:background-color .14s ease,border-color .14s ease;pointer-events:none;}',
+  '.dshh-settingsPanel .dshh-switchThumb{box-sizing:border-box;position:absolute;display:block;left:2px;top:2px;width:16px;height:16px;margin:0;padding:0;border:0;border-radius:50%;background:#fff;transform:translateX(0);transition:transform .14s ease,background-color .14s ease;}',
+  '.dshh-settingsPanel .dshh-settingsSwitch[aria-checked=true] .dshh-switchTrack{background:var(--dsw-alias-brand-primary-new-colorprimary-new-color,#4176e6);border-color:var(--dsw-alias-brand-primary-new-colorprimary-new-color,#4176e6);}',
+  '.dshh-settingsPanel .dshh-settingsSwitch[aria-checked=true] .dshh-switchThumb{transform:translateX(18px);background:#fff;}',
+  '.dshh-settingsPanel .dshh-settingsSwitch:hover .dshh-switchTrack{border-color:var(--dsw-alias-label-primary,#e5e7eb);}',
+  '.dshh-settingsPanel .dshh-switchState{display:block;min-width:24px;font-size:12px;font-weight:500;line-height:1;color:var(--dsw-alias-label-primary,#e5e7eb);text-align:center;white-space:nowrap;pointer-events:none;}',
+  '.dshh-settingRow label{cursor:pointer;}',
+  '@media(prefers-reduced-motion:reduce){.dshh-switchTrack,.dshh-switchThumb{transition:none}}',
+  '.dshh-settingsFooter{display:flex;justify-content:flex-end;border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.25));padding-top:14px;}',
+  '.dshh-settingsFooter button{font:inherit;background:transparent;color:var(--dsw-alias-label-secondary,#8a8f98);border:0;padding:4px 0;cursor:pointer;}',
+  '.dshh-settingsFooter button:hover{color:var(--dsw-alias-label-primary,#e5e7eb);}',
+  '.dshh-settingsError{font-size:12px;color:var(--dsw-alias-label-secondary,#8a8f98);}',
+  '@media(max-width:420px){.dshh-settingsBackdrop{padding:12px}.dshh-settingsPanel{padding:16px}.dshh-settingRow{gap:8px}}',
   // 会话计时胶囊：只读读数，所以指针不该是"可点"；数字用等宽数字，跳动时宽度不抖。
   '.dshh-timer{cursor:default;gap:5px;}',
   // 悬停气泡：`pointer-events:none` 保证它永远不挡指针；`pre-wrap` 保留调用方给的多行结构。
@@ -319,6 +407,10 @@ export const CSS = [
   'border-bottom:.5px solid var(--dsw-alias-border-l2,rgba(127,127,127,0.3));}',
   '.dshh-skinTitle{color:var(--dsw-alias-label-primary,#e5e7eb);font-size:14px;font-weight:400;line-height:22px;}',
   '.dshh-skinCubes{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;}',
+  '.dshh-skinLabel{max-width:100%;overflow-wrap:anywhere;text-align:center;}',
+  // 方块里的图标框：角色预览图与官方线稿（等比放大并居中）共用同一个 56px 方格，
+  // 两者同大，并排时不会一高一低。线稿的裁剪框在 `skin-cards.ts` 的 `GLYPH_BOX`。
+  '.dshh-skinCube .dshh-skinFace{width:56px;height:56px;object-fit:contain;display:block;}',
   '.dshh-skinCube{box-sizing:border-box;flex:180px;display:flex;flex-direction:column;',
   'align-items:center;justify-content:center;gap:4px;padding:20px 32px;',
   'font:inherit;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary,#e5e7eb);',
@@ -333,6 +425,8 @@ export const CSS = [
   'font-variant-numeric:tabular-nums;}',
   '.dshh-runPhrase{white-space:nowrap;}',
   // 「用时」压暗一档：它是背景信息，别跟正在变的那句话抢注意力。
-  '.dshh-runTime{opacity:.55;font-size:.92em;white-space:nowrap;}',
-  '.dshh-runTime:empty{display:none;}',
+  '.dshh-runTime{opacity:.55;font-size:inherit;white-space:nowrap;}',
+  '.dshh-runTime:empty,.dshh-runTime[hidden]{display:none;}',
+  // 「本轮结束时刻」后面那截耗时：和时刻同一行同一字号（动作栏本身有 8px 间距），
+  // 压暗一档，数字等宽 —— 只当补充读数，不跟操作按钮抢注意力。
 ].join('')

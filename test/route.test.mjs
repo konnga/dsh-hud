@@ -12,10 +12,12 @@ test('注册一条前缀路由与会话归因监听，并都挂在自身的 ctx.
   assert.equal(routes[0].kind, 'prefix')
   assert.equal(routes[0].path, CHANNEL)
   assert.equal(typeof routes[0].handler, 'function')
-  // 三个 effect：会话归因的事件监听、提供方余额读取器的装卸、路由本身（标签顺序就是注册顺序）。
+  // Projection, attribution, balance, expression packs and route each own their effects.
   assert.deepEqual(labels, [
+    'dsh-hud: running activity',
     'dsh-hud: session change tracking',
     'dsh-hud: provider balance reader',
+    'dsh-hud: expression packs',
     `dsh-hud: POST ${CHANNEL}/*`,
   ])
   assert.deepEqual([...listeners.keys()].sort(), [

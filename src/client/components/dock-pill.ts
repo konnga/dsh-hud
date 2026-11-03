@@ -5,8 +5,10 @@
 
 import React from 'react'
 
+import { SettingsPill } from './settings-pill.js'
 import { balancePillNode } from './balance-pill.js'
 import { branchLabel, countShorthands, fullWhen, shortBranch, workspaceNameOf } from '../format.js'
+import { useHudSettings } from '../hooks/use-hud-settings.js'
 import { useStore } from '../hooks/use-store.js'
 import type {
   HudState,
@@ -98,6 +100,7 @@ export function HudDockPill(props: HudDockPillProps): React.ReactElement | null 
   var mainView = !summary || !summary.retainedBy ? true : (summary.retainedBy.mainView || 0) > 0
 
   var state = useStore(store)
+  var preferences = useHudSettings().preferences
 
   /**
    * 工具胶囊的"实时秒数"滴答。
@@ -285,37 +288,50 @@ export function HudDockPill(props: HudDockPillProps): React.ReactElement | null 
   return h(
     'div',
     { className: 'dshh-dock', 'data-dsh-hud': 'dock' },
-    h(
-      'button',
-      Object.assign(
-        {
-          type: 'button',
-          className: 'dshh-pill',
-          'data-dsh-hud': 'pill',
-          'aria-expanded': state.panelOpen ? 'true' : 'false',
-          style: { color: state.panelOpen ? 'var(--dsw-alias-brand-primary, #4b8bf5)' : undefined },
-          onClick: function () {
-            store.togglePanel()
-          },
-        },
-        store.tipHandlers('pill', function () {
-          return titleLines
-        }),
-      ),
-      children,
-    ),
+    preferences.showGit
+      ? h(
+          'button',
+          Object.assign(
+            {
+              type: 'button',
+              className: 'dshh-pill',
+              'data-dsh-hud': 'pill',
+              'aria-expanded': state.panelOpen ? 'true' : 'false',
+              style: {
+                color: state.panelOpen ? 'var(--dsw-alias-brand-primary, #4b8bf5)' : undefined,
+              },
+              onClick: function () {
+                store.togglePanel()
+              },
+            },
+            store.tipHandlers('pill', function () {
+              return titleLines
+            }),
+          ),
+          children,
+        )
+      : null,
     // 工具活动那一枚并排在后面 —— dock 是竖列，独立注册会另起一整行（用户实测"换行了"）。
-    toolPillNode(state, { t: t, store: store, now: props.now === undefined ? tick[0] : props.now }),
+    preferences.showTools
+      ? toolPillNode(state, {
+          t: t,
+          store: store,
+          now: props.now === undefined ? tick[0] : props.now,
+        })
+      : null,
     // 余额在计时之前：余额是会变的"钱"，计时是一直在涨的时长 —— 让读数靠前、节拍感靠后。
     // 读不到时 `balancePillNode` 自己回 null（不占位）。
-    balancePillNode(state, { t: t, store: store }),
-    // 计时胶囊放在**最后**（几枚同在一条注册里 → 同一行；独立注册会另起一整行）。
-    timerPillNode(state, {
-      t: t,
-      store: store,
-      sessionId: sessionId,
-      now: props.now === undefined ? tick[0] : props.now,
-    }),
+    preferences.showBalance ? balancePillNode(state, { t: t, store: store }) : null,
+    // 计时胶囊放在设置入口之前（几枚同在一条注册里 → 同一行；独立注册会另起一整行）。
+    preferences.showTimer
+      ? timerPillNode(state, {
+          t: t,
+          store: store,
+          sessionId: sessionId,
+          now: props.now === undefined ? tick[0] : props.now,
+        })
+      : null,
+    h(SettingsPill, { t: t, store: store }),
   )
 }
 

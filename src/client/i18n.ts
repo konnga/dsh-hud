@@ -1,9 +1,67 @@
+import { EXPRESSION_PACK_ZH, EXPRESSION_PACK_EN } from './expression-pack-i18n.js'
+
 /**
  * 两份词典（`dshHud` 命名空间）。键一致、值分别是中文与英文；`t()` 取不到会回落成键本身，
  * 所以"漏翻"会直接显示给人看 —— 有一条用例专门盯这件事（它扫的是源码，不是产物）。
  */
 
 export const zh = {
+  ...EXPRESSION_PACK_ZH,
+
+  'settings.relays.tokenLabel': '网页令牌',
+  'settings.relays.showToken': '查看网页令牌',
+  'settings.relays.hideToken': '隐藏网页令牌',
+  'settings.relays.copyToken': '复制网页令牌',
+  'settings.relays.tokenNotConfigured': '未配置',
+  'settings.relays.tokenNotSupported': '不支持',
+
+  'settings.relays.copyAddress': '复制 API 地址',
+  'settings.relays.copyKey': '复制 API 密钥',
+  'settings.relays.copied': '已复制',
+  'settings.relays.copyFailed': '复制失败，请重试',
+
+  'settings.general': '常规',
+  'settings.relays.showKey': '查看密钥',
+  'settings.relays.hideKey': '隐藏密钥',
+  'settings.relays.keyUnknown': 'API 密钥：状态未知',
+  'settings.relays.keyConfigured': 'API 密钥：已配置',
+  'settings.relays.keyMissing': 'API 密钥：未配置',
+  'settings.relays.restartRequired': '宿主尚未加载此功能，请重启 DeepSeek Harness 后重试。',
+  'settings.relays.settingsUnavailable':
+    '模型配置服务尚未就绪，请稍后刷新；若刚更新插件，请重启 DeepSeek Harness。',
+
+  'settings.capsules': '胶囊显示',
+  'settings.showGit': 'Git',
+  'settings.showTools': '工具与技能',
+  'settings.showBalance': '余额',
+  'settings.showTimer': '会话计时',
+  'settings.balances': '余额管理',
+  'settings.relays.reload': '刷新列表',
+  'settings.relays.query': '查询余额',
+  'settings.relays.loading': '正在读取…',
+  'settings.relays.error': '读取失败，请重试',
+  'settings.relays.unsupported': '当前服务不支持此查询',
+  'settings.relays.empty': '尚未配置中转站',
+  'settings.relays.noAddress': '地址不可用',
+  'settings.relays.tokenConfigured': '网页令牌：已配置',
+  'settings.relays.tokenMissing': '网页令牌：未配置',
+  'settings.relays.tokenUnsupported': '网页令牌：不支持或状态未知',
+  'settings.relays.notQueried': '尚未查询余额',
+  'settings.relays.remaining': '余额',
+  'settings.relays.usedAccount': '账号已用',
+  'settings.relays.usedKey': '本 Key 已用',
+  'settings.relays.unknownRemaining': '剩余额度未知',
+  'settings.relays.wallet': '钱包余额',
+
+  'settings.title': 'DSH HUD 设置',
+  'settings.close': '关闭设置',
+  'settings.imageSize': '角色图片尺寸',
+  'settings.elapsed': '显示用时',
+  'settings.on': '开',
+  'settings.off': '关',
+  'settings.reset': '恢复默认',
+  'settings.saveFailed': '本次已生效，未能保存到本地',
+
   'panel.title': 'Git',
   'panel.refresh': '刷新',
   'panel.reset': '复位位置',
@@ -181,11 +239,69 @@ export const zh = {
   'err.transport': '无法连接到宿主半',
   'skin.title': '思考中动画',
   'skin.off': '官方',
-  'skin.plane': '纸飞机',
-  'skin.whale': '鲸鱼娘',
+  'skin.whale': 'Q版鲸鱼娘',
+  'skin.cyber-whale': '赛博鲸鱼娘',
+  'skin.longdress-whale': '长裙鲸鱼娘',
 }
 
 export const en = {
+  ...EXPRESSION_PACK_EN,
+
+  'settings.relays.tokenLabel': 'Web token',
+  'settings.relays.showToken': 'Show web token',
+  'settings.relays.hideToken': 'Hide web token',
+  'settings.relays.copyToken': 'Copy web token',
+  'settings.relays.tokenNotConfigured': 'Not configured',
+  'settings.relays.tokenNotSupported': 'Not supported',
+
+  'settings.relays.copyAddress': 'Copy API address',
+  'settings.relays.copyKey': 'Copy API key',
+  'settings.relays.copied': 'Copied',
+  'settings.relays.copyFailed': 'Copy failed; please retry',
+
+  'settings.general': 'General',
+  'settings.relays.showKey': 'Show key',
+  'settings.relays.hideKey': 'Hide key',
+  'settings.relays.keyUnknown': 'API key: status unknown',
+  'settings.relays.keyConfigured': 'API key: configured',
+  'settings.relays.keyMissing': 'API key: not configured',
+  'settings.relays.restartRequired':
+    'The host has not loaded this feature. Restart DeepSeek Harness and try again.',
+  'settings.relays.settingsUnavailable':
+    'Model settings are not ready. Reload shortly; restart DeepSeek Harness if the plugin was just updated.',
+
+  'settings.capsules': 'Capsule visibility',
+  'settings.showGit': 'Git',
+  'settings.showTools': 'Tools and skills',
+  'settings.showBalance': 'Balance',
+  'settings.showTimer': 'Session timer',
+  'settings.balances': 'Balance management',
+  'settings.relays.reload': 'Reload list',
+  'settings.relays.query': 'Check balance',
+  'settings.relays.loading': 'Loading…',
+  'settings.relays.error': 'Could not load; please retry',
+  'settings.relays.unsupported': 'This query is not supported',
+  'settings.relays.empty': 'No relays configured',
+  'settings.relays.noAddress': 'Address unavailable',
+  'settings.relays.tokenConfigured': 'Web token: configured',
+  'settings.relays.tokenMissing': 'Web token: not configured',
+  'settings.relays.tokenUnsupported': 'Web token: unsupported or unknown',
+  'settings.relays.notQueried': 'Balance not queried yet',
+  'settings.relays.remaining': 'Remaining',
+  'settings.relays.usedAccount': 'Account used',
+  'settings.relays.usedKey': 'Key used',
+  'settings.relays.unknownRemaining': 'Remaining balance unknown',
+  'settings.relays.wallet': 'Wallet balance',
+
+  'settings.title': 'DSH HUD settings',
+  'settings.close': 'Close settings',
+  'settings.imageSize': 'Character image size',
+  'settings.elapsed': 'Show elapsed time',
+  'settings.on': 'On',
+  'settings.off': 'Off',
+  'settings.reset': 'Restore defaults',
+  'settings.saveFailed': 'Applied for this session; could not save locally',
+
   'panel.title': 'Git',
   'panel.refresh': 'Refresh',
   'panel.reset': 'Reset position',
@@ -365,6 +481,7 @@ export const en = {
   'err.transport': 'Cannot reach the host half',
   'skin.title': 'Thinking animation',
   'skin.off': 'Official',
-  'skin.plane': 'Paper plane',
-  'skin.whale': 'Whale girl',
+  'skin.whale': 'Chibi Whale Girl',
+  'skin.cyber-whale': 'Cyber Whale Girl',
+  'skin.longdress-whale': 'Longdress Whale Girl',
 }
