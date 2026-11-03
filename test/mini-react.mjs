@@ -42,6 +42,16 @@ export function createMiniReact() {
       return [read, write]
     },
 
+    useRef(initial) {
+      const slot = instance.index
+      instance.hookKinds.push('ref')
+      instance.index += 1
+      if (!Object.prototype.hasOwnProperty.call(instance.state, slot)) {
+        instance.state[slot] = { current: initial }
+      }
+      return instance.state[slot]
+    },
+
     useEffect(fn, deps) {
       const slot = instance.index
       instance.hookKinds.push('effect')
@@ -63,7 +73,11 @@ export function createMiniReact() {
         entry.deps.every((value, index) => Object.is(value, previous.deps[index]))
       if (unchanged) continue
       if (previous && typeof previous.cleanup === 'function') previous.cleanup()
-      instance.effects.set(entry.slot, { deps: entry.deps, cleanup: entry.fn() })
+      // React records the effect before flushing state updates from its callback.
+      // A synchronous setState in this test runtime may re-enter renderOnce immediately.
+      const effect = { deps: entry.deps, cleanup: null }
+      instance.effects.set(entry.slot, effect)
+      effect.cleanup = entry.fn()
     }
   }
 

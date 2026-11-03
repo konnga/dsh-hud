@@ -19,10 +19,16 @@
  * 都会变的 hash 类名。
  */
 
+import { getHudSettings } from './hud-settings.js'
 import { stopRunningText, syncRunningText } from './running-text.js'
+import { isCharacterSkin, isCustomSkin } from '../shared/expression-packs.js'
 
-/** 可选的皮肤。`off` 表示不注入，官方那套原样保留。 */
-export type RunningSkinId = 'plane' | 'whale' | 'off'
+/** Built-in IDs; custom packs use stable Host-generated IDs. */
+export type BuiltinSkinId = 'whale' | 'cyber-whale' | 'longdress-whale' | 'off'
+export type RunningSkinId = BuiltinSkinId | `custom:${string}`
+export function isRunningSkinId(value: string): value is RunningSkinId {
+  return value === 'off' || isCharacterSkin(value)
+}
 
 /**
  * 当前启用的皮肤。
@@ -36,7 +42,7 @@ export var RUNNING_SKIN: RunningSkinId = 'whale'
  * 设置面板里的方块的顺序。`off` 排第一：想回到原样的人一眼能找到。
  * （默认选中鲸鱼娘；已有存储选择保持不变。）
  */
-export var SKIN_IDS: RunningSkinId[] = ['off', 'plane', 'whale']
+export var SKIN_IDS: RunningSkinId[] = ['off', 'whale', 'cyber-whale', 'longdress-whale']
 
 /** 运行时选择的存储键。浏览器控制台里改它再刷新，等价于点设置面板。 */
 var STORAGE_KEY = 'dsh-hud:running-skin'
@@ -50,12 +56,9 @@ var storageFailed = false
 var listeners = new Set<() => void>()
 
 function storedSkin(value: string | null): RunningSkinId {
-  // 旧轮播与呼吸光标统一归入纸飞机；只规范化生效值，不主动覆写旧存储。
-  // 新旧窗口同时打开时也能通过 storage / focus 安全同步。
-  if (value === 'rotate' || value === 'pulse') return 'plane'
-  return value !== null && Object.prototype.hasOwnProperty.call(PRESETS, value)
-    ? (value as RunningSkinId)
-    : RUNNING_SKIN
+  // A custom pack can be temporarily unavailable while its Host catalog loads.
+  // Do not erase its saved selection merely because it is not cached yet.
+  return value !== null && isRunningSkinId(value) ? value : RUNNING_SKIN
 }
 
 /** 存储不可读时保留内存选择，不把异常当成「恢复默认」。 */
@@ -81,29 +84,6 @@ function notify(): void {
   })
 }
 
-/**
- * 纸飞机（16×16 实心）。base64 是为了让 `url()` 里不出现引号与尖括号 ——
- * 那两种字符在 CSS 的 mask 里要么得转义、要么直接解析失败。
- */
-var PLANE_MASK =
-  'url("data:image/svg+xml;base64,' +
-  'PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiI+' +
-  'PHBhdGggZD0iTTE0LjYgMS40IDEuNCA2LjlsNSAxLjcgMS43IDV6IiBmaWxsPSIjMDAwIi8+PC9zdmc+")'
-
-/** 纸飞机替换原图标，文案只在挂载成功后接管。失败与多会话保留官方文字。 */
-var PLANE = [
-  '[data-chat-running] [class*="_runningIcon"]>span,',
-  '[data-chat-running] [class*="_runningIcon"]>svg{display:none}',
-  '[data-chat-running] [class*="_runningIcon"]{background:currentColor;mask:',
-  PLANE_MASK,
-  ' center/contain no-repeat;animation:dshh-plane 2.6s ease-in-out infinite}',
-  '[data-chat-running][data-dsh-hud-running-text] [data-shimmer]{display:none}',
-  '@keyframes dshh-plane{0%,100%{transform:translate3d(0,0,0) rotate(0)}',
-  '50%{transform:translate3d(1px,-2px,0) rotate(-8deg)}}',
-  '@media(prefers-reduced-motion:reduce){',
-  '[data-chat-running] [class*="_runningIcon"]{animation:none!important}}',
-].join('')
-
 /** 彩色全身图不走 currentColor mask；只接管图片已加载成功的唯一运行行。 */
 var WHALE = [
   '[data-chat-running][data-dsh-hud-running-text] [data-shimmer]{display:none}',
@@ -114,15 +94,40 @@ var WHALE = [
   '[data-chat-running] .dshh-runText{align-items:center;gap:10px;min-height:56px}',
   '[data-chat-running] .dshh-runCopy{display:inline-flex;flex-direction:column;',
   'align-items:flex-start;justify-content:center;gap:2px;min-width:0}',
-  '[data-chat-running] .dshh-runTime{font-size:.78em;line-height:1.2}',
+  // Fact and flavour share one row; the aside is muted and never looks like a second fact.
+  '[data-chat-running] .dshh-runLine{display:flex;align-items:baseline;flex-wrap:wrap;',
+  'gap:6px;min-width:0}',
+  // Same type size as the fact line: the aside only differs by opacity, never by scale.
+  '[data-chat-running] .dshh-runTime,[data-chat-running] .dshh-runPhrase,',
+  '[data-chat-running] .dshh-runFun{font-size:1em;white-space:nowrap}',
+  '[data-chat-running] .dshh-runFun{opacity:.62}',
+  '[data-chat-running] .dshh-runFun:not(:empty)::before{content:"\\00B7";margin-right:6px;',
+  'opacity:.7}',
+  '[data-chat-running] .dshh-runTime{line-height:1.2}',
   '[data-chat-running] .dshh-runPhrase{white-space:normal;overflow-wrap:anywhere;line-height:1.4}',
-  '@media(prefers-reduced-motion:reduce){[data-chat-running] .dshh-runWhale{animation:none}}',
+  // Two soft crests travel left to right inside the glyphs; no duplicate text or layout shifts.
+  '@supports(background-clip:text){',
+  '[data-chat-running] .dshh-runTime,[data-chat-running] .dshh-runPhrase,',
+  '[data-chat-running] .dshh-runFun{',
+  'background-image:linear-gradient(110deg,currentColor 0%,currentColor 38%,',
+  'color-mix(in srgb,currentColor 60%,transparent) 43%,currentColor 48%,',
+  'color-mix(in srgb,currentColor 70%,transparent) 53%,currentColor 58%,currentColor 100%);',
+  'background-size:300% 100%;background-repeat:no-repeat;',
+  'background-clip:text;-webkit-background-clip:text;-webkit-text-fill-color:transparent;',
+  'animation:dshh-text-ripple 3.6s ease-in-out infinite}',
+  '@keyframes dshh-text-ripple{0%{background-position:100% 50%}',
+  '75%,100%{background-position:0% 50%}}}',
+  '@media(prefers-reduced-motion:reduce){[data-chat-running] .dshh-runWhale{animation:none}',
+  '[data-chat-running] .dshh-runTime,[data-chat-running] .dshh-runPhrase,',
+  '[data-chat-running] .dshh-runFun{',
+  'animation:none;background-image:none;-webkit-text-fill-color:currentColor}}',
 ].join('')
 
-var PRESETS: Record<RunningSkinId, string> = {
+var PRESETS: Record<BuiltinSkinId, string> = {
   off: '',
-  plane: PLANE,
   whale: WHALE,
+  'cyber-whale': WHALE,
+  'longdress-whale': WHALE,
 }
 
 /** 当前生效值：只在第一次读取存储，之后由统一入口更新。 */
@@ -183,7 +188,10 @@ export function watchRunningSkin(): () => void {
  * @returns 可以直接塞进 `<style>` 的 CSS 文本。
  */
 export function runningSkinCss(id: RunningSkinId = currentSkin()): string {
-  return PRESETS[id] || ''
+  var css = isCustomSkin(id) ? WHALE : PRESETS[id as BuiltinSkinId] || ''
+  if (isCharacterSkin(id))
+    css = css.replaceAll('56px', String(getHudSettings().preferences.imageSize) + 'px')
+  return css
 }
 
 /**

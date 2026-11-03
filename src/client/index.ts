@@ -14,7 +14,27 @@ export { apply, inject } from './plugin.js'
  *
  * 框架只认 `apply` / `inject`，多出来的导出它不看。
  */
-export { extractElapsed, groupOfTool } from './running-text.js'
+export {
+  extractElapsed,
+  groupOfTool,
+  configureRunningText,
+  refreshRunningText,
+} from './running-text.js'
+export {
+  createActivitySelector,
+  ACTION_POOL,
+  FUN_PHRASES,
+  pickFunPhrase,
+} from './running-activity-cues.js'
+export { watchRunningActivity } from './running-activity.js'
 
 /** 同源文案动作表，供联动契约测试与离线预览共用。 */
 export { RUNNING_CUES } from './running-cues.js'
+
+/** Public pack facade also used by integration tests of the actual browser bundle. */
+export { createExpressionPacks, getExpressionPackStore } from './expression-packs.js'
+export {
+  ExpressionPacks,
+  guessExpressionAction,
+  emptyExpressionDraft,
+} from './components/expression-packs.js'

@@ -1,77 +1,56 @@
-/**
- * 「思考中」那行的轮播文案。
- *
- * 为什么不能只靠 CSS：官方文字是 React 每秒重渲染出来的（`setInterval` → `setNow`），
- * 内容由 i18n 决定，纯 CSS 的 `content` 只能写死一句，也拿不到「用时」。
- * 所以这里走 DOM：**不去改 React 管的那棵树**，而是
- *
- *   1. 先挂载替换节点，再给运行行打标，换皮表只隐藏该行的官方文字；
- *   2. 在 `.runningContent` 末尾**追加**一个自己的 span，文案由我们定时换。
- *
- * 追加的节点在 React 的 children 之外：它每次重渲染只更新自己的那两个子节点
- * （图标 + 文字），不会碰到我们挂在末尾的这一颗。轮次结束整棵子树卸载，我们跟着没，
- * 下一个轮次由 300ms 的 tick 重新挂上。
- *
- * 计时不是自己算的：官方那行里还留着「用时 1 分 1 秒」，从隐藏的 `data-shimmer-text`
- * 里抠出来接着显示 —— 口径和官方一致，不用重复实现一遍时长格式化。
- *
- * 文案**跟着正在跑的工具走**：跑 `apply_patch` 时说「正在改文件」，跑 `bash` 时说
- * 「在敲命令」，没有工具在跑才是「深度求索中」。工具名由调用方通过 `read` 传进来
- * （插件里读的是 `store.getSnapshot().tools.active`），这个模块自己不碰 store。
- */
-
+/** Existing running-row adapter. Identity-driven poses; the 300ms tick only mounts and copies elapsed time. */
 import type { RunningSkinId } from './running-skin.js'
-import { RUNNING_CUES } from './running-cues.js'
-import type { RunningGroup, WhaleAction } from './running-cues.js'
-import { WHALE_ASSETS } from './whale-assets.js'
+import { getHudSettings } from './hud-settings.js'
+import {
+  ACTION_POOL,
+  FUN_PHRASES,
+  createActivitySelector,
+  pickFunPhrase,
+} from './running-activity-cues.js'
+import type { DisplayActivity } from './running-activity-cues.js'
+export { groupOfTool } from './running-activity-cues.js'
+import type { RunningCue, WhaleAction } from './running-cues.js'
+import { characterFrame } from './character-packs.js'
+import { isCharacterSkin } from '../shared/expression-packs.js'
 export type { RunningGroup } from './running-cues.js'
 
-/** 每隔多久在同一组里换一句。3.2s 是「读得完一句、又不至于等」的折中。 */
-var ROTATE_MS = 3200
-
-/**
- * 检查节拍。300ms 是「轮次开始后几乎立刻出现」与「几乎不耗」的折中：
- * 只读取现有运行行；多会话时保留官方文案，避免冒用主会话的工具状态。
- */
+/** Local DOM/clock maintenance only; never advances a pose or sends a request. */
 var TICK_MS = 300
 
-/** 文案分组：按「现在在干什么」切，不是纯按时间轮。 */
-// 分组与中英文动作表定义在 running-cues.ts。
-
 /**
- * 工具名 → 分组。按前缀匹配，认不出的一律落 `other`（在跑，但不知道在跑什么）。
- *
- * 名字来自宿主报上来的工具名（`bash` / `apply_patch` / …），这里放宽一点，
- * 常见别名一起认，免得换个工具名就退回「正在动手」。
+ * The playful line is decorative, so it may rotate on its own clock — unlike the
+ * pose, which only changes when the session reports a new identity. It comes from
+ * one pool for every activity, never restates the factual line (see
+ * `FUN_PHRASES`), pauses while hovered or focused, and freezes with reduced motion.
  */
-var GROUP_RULES: Array<[RegExp, RunningGroup]> = [
-  [/^write_stdin$/i, 'shell'],
-  [/^(apply_patch|edit|write|create_file|str_replace|patch)/i, 'edit'],
-  [/^(bash|shell|exec|run|terminal|command|process)/i, 'shell'],
-  [/^(web_search|web_fetch|fetch|browse|search_web|http)/i, 'search'],
-  [/^(read|read_file|grep|glob|list|ls|search_data|inspect)/i, 'read'],
-]
+var FUN_ROTATE_MS = 6000
 
 /** 正在跑的节拍（`null` = 没跑）。 */
 var timer: number | null = null
 /** 挂载节点与文案 / 用时引用；鲸鱼娘把文字包成两行。 */
 var node: HTMLElement | null = null
 var phraseEl: HTMLElement | null = null
+var funEl: HTMLElement | null = null
 var timeEl: HTMLElement | null = null
 var imageEl: HTMLImageElement | null = null
 var imageAction: WhaleAction | null = null
+var imageKey: string | null = null
 var pendingImage: HTMLImageElement | null = null
 var pendingPhrase = ''
 var activeSkin: RunningSkinId | null = null
 var motionQuery: MediaQueryList | null = null
 /** 上一拍看到的那个 `[data-chat-running]`：换了就说明是新的一轮，从第一句重来。 */
 var lastRoot: Element | null = null
-/** 当前分组：工具一换就跳回该组的第一句。 */
-var group: RunningGroup = 'idle'
-var index = 0
-var lastRotate = 0
-/** 读「现在在跑哪个工具」；插件在 apply 时把它接上（`store.getSnapshot().tools.active`）。 */
-var readTool: (() => string | null) | null = null
+var cue: RunningCue = { zh: '正在处理', en: 'Working', action: 'thinking' }
+/** 表情与趣味短语同一节拍推进：全库池按顺序走，走完一圈再从头。 */
+var poseCursor = 0
+var selectCue = createActivitySelector()
+var readActivity: (() => DisplayActivity | null) | null = null
+var lastSessionId: string | undefined
+var funCurrent: string | null = null
+var funAt = 0
+/** True while the pointer or keyboard focus rests on the aside: rotation waits. */
+var funPaused = false
 
 /** 应用的语言解析器；没有服务的旧环境安全回落中文，不读取浏览器语言。 */
 var resolveText: (text: { zh: string; en: string }) => string = function (text) {
@@ -79,17 +58,18 @@ var resolveText: (text: { zh: string; en: string }) => string = function (text) 
 }
 
 export interface RunningTextOptions {
-  readTool: () => string | null
+  readActivity: () => DisplayActivity | null
   resolveText: (text: { zh: string; en: string }) => string
 }
 
 /** 配置只借用客户端服务，卸载时释放对 store / locale 的引用。 */
 export function configureRunningText(options: RunningTextOptions): () => void {
-  readTool = options.readTool
+  readActivity = options.readActivity
+  selectCue = createActivitySelector()
   resolveText = options.resolveText
   return function () {
     stopRunningText()
-    readTool = null
+    readActivity = null
     resolveText = function (text) {
       return text.zh
     }
@@ -97,28 +77,82 @@ export function configureRunningText(options: RunningTextOptions): () => void {
 }
 
 function phraseAt(): string {
-  return resolveText(RUNNING_CUES[group][index])
+  return resolveText(cue)
+}
+
+/** 趣味短语只换文字，不动图片、不改变事实。 */
+function showFun(text: string): void {
+  if (funEl !== null && funEl.textContent !== text) funEl.textContent = text
+}
+
+/**
+ * 悬停或键盘聚焦时暂停轮换：读者正在看这句，就别把它换掉。
+ * 测试里的假节点没有 addEventListener，缺了它只是没有暂停能力。
+ */
+function pauseFun(): void {
+  funPaused = true
+  funAt = Date.now()
+}
+
+function resumeFun(): void {
+  funPaused = false
+  funAt = Date.now()
+}
+
+function attachFunHover(element: HTMLElement): void {
+  if (typeof element.addEventListener !== 'function') return
+  element.addEventListener('mouseenter', pauseFun)
+  element.addEventListener('mouseleave', resumeFun)
+  element.addEventListener('focusin', pauseFun)
+  element.addEventListener('focusout', resumeFun)
+}
+
+function detachFunHover(): void {
+  if (funEl === null || typeof funEl.removeEventListener !== 'function') return
+  funEl.removeEventListener('mouseenter', pauseFun)
+  funEl.removeEventListener('mouseleave', resumeFun)
+  funEl.removeEventListener('focusin', pauseFun)
+  funEl.removeEventListener('focusout', resumeFun)
+}
+
+/** 取池内下一张姿势（按顺序，走完一轮再循环）。 */
+function nextPose(): WhaleAction {
+  var pose = ACTION_POOL[poseCursor % ACTION_POOL.length]
+  poseCursor += 1
+  cue = { ...cue, action: pose }
+  return pose
+}
+
+/**
+ * 每拍（300ms）看一眼：还没句子就先取一句；到点且没被悬停/聚焦暂停时随机换下一句，
+ * **表情同一拍跟着换**。悬停或聚焦时两者一起停住。
+ */
+function syncFun(reduced: boolean): void {
+  if (funEl === null) return
+  var now = Date.now()
+  if (funCurrent === null) {
+    funCurrent = pickFunPhrase(FUN_PHRASES, null).zh
+    poseCursor = 1
+    cue = { ...cue, action: ACTION_POOL[0] }
+    funAt = now
+  } else if (!reduced && !funPaused && now - funAt >= FUN_ROTATE_MS) {
+    funCurrent = pickFunPhrase(FUN_PHRASES, funCurrent).zh
+    nextPose()
+    funAt = now
+  }
+  var match = null
+  for (var i = 0; i < FUN_PHRASES.length; i += 1) {
+    if (FUN_PHRASES[i].zh === funCurrent) {
+      match = FUN_PHRASES[i]
+      break
+    }
+  }
+  showFun(resolveText(match || { zh: funCurrent, en: funCurrent }))
 }
 
 /** locale 订阅通知时立即更新，不必等下一拍。 */
 export function refreshRunningText(): void {
   if (timer !== null) tick()
-}
-
-/**
- * 工具名归到哪一组。
- *
- * @param name - 正在跑的工具名；没有工具在跑是 `null`。
- * @returns 该用哪一组文案。
- */
-export function groupOfTool(name: string | null): RunningGroup {
-  if (name === null || name === '') return 'idle'
-  if (/^(web|browser)[.:/]/i.test(name)) return 'search'
-  name = name.replace(/^.*[.:/]/, '')
-  for (var cursor = 0; cursor < GROUP_RULES.length; cursor += 1) {
-    if (GROUP_RULES[cursor][0].test(name)) return GROUP_RULES[cursor][1]
-  }
-  return 'other'
 }
 
 /**
@@ -154,16 +188,24 @@ function mountInto(content: Element): HTMLElement {
   phrase.className = 'dshh-runPhrase'
   phrase.textContent = phraseAt()
 
+  var fun = document.createElement('span')
+  fun.className = 'dshh-runFun'
+
+  var line = document.createElement('span')
+  line.className = 'dshh-runLine'
+  line.appendChild(phrase)
+  line.appendChild(fun)
+
   var time = document.createElement('span')
   time.className = 'dshh-runTime'
 
-  if (activeSkin === 'whale') {
+  if (activeSkin !== null && isCharacterSkin(activeSkin)) {
     // 同一文字列：用时在上、文案在下；没有用时时由 :empty 自动收起，
     // 保留 DOM 引用，计时刷新与图片回退都不需要重新挂载。
     var copy = document.createElement('span')
     copy.className = 'dshh-runCopy'
     copy.appendChild(time)
-    copy.appendChild(phrase)
+    copy.appendChild(line)
     span.appendChild(copy)
     var image = document.createElement('img')
     image.className = 'dshh-runWhale'
@@ -180,13 +222,14 @@ function mountInto(content: Element): HTMLElement {
     }
     imageEl = image
   } else {
-    // 纸飞机轮播文案使用一行布局。
-    span.appendChild(phrase)
+    span.appendChild(line)
     span.appendChild(time)
   }
   content.appendChild(span)
 
   phraseEl = phrase
+  funEl = fun
+  attachFunHover(fun)
   timeEl = time
   return span
 }
@@ -201,7 +244,7 @@ function cancelPendingImage(): void {
 
 /** 界面外准备新图，解码完成后同拍更新图片与文案，期间保留上一张图。 */
 function syncAction(root: Element): void {
-  var action = RUNNING_CUES[group][index].action
+  var action = cue.action
   var phrase = phraseAt()
   if (imageEl === null) {
     if (node !== null) node.setAttribute('data-action', action)
@@ -209,12 +252,28 @@ function syncAction(root: Element): void {
     return
   }
   pendingPhrase = phrase
-  if (imageAction === action) {
-    if (pendingImage === null) show(phrase)
+  // Factual state must not wait for an image decode (which can fail or stall).
+  show(phrase)
+  var frame = activeSkin === null ? null : characterFrame(activeSkin, action)
+  if (frame === null) {
+    cancelPendingImage()
+    imageKey = null
+    show(phrase)
+    return
+  }
+  if (imageKey === frame.key) {
+    imageAction = action
+    if (pendingImage === null) {
+      imageEl.setAttribute('data-action', action)
+      if (node !== null) node.setAttribute('data-action', action)
+      show(phrase)
+    }
     return
   }
   cancelPendingImage()
   imageAction = action
+  imageKey = frame.key
+  var source = frame.src
   var image = imageEl
   var candidate = document.createElement('img')
   pendingImage = candidate
@@ -225,10 +284,10 @@ function syncAction(root: Element): void {
   function commit(): void {
     if (!isCurrent()) return
     cancelPendingImage()
-    image.src = WHALE_ASSETS[action]
-    image.setAttribute('data-action', action)
+    image.src = source
+    image.setAttribute('data-action', imageAction || action)
     image.hidden = false
-    if (node !== null) node.setAttribute('data-action', action)
+    if (node !== null) node.setAttribute('data-action', imageAction || action)
     show(pendingPhrase)
     root.setAttribute('data-dsh-hud-running-whale', '')
   }
@@ -254,7 +313,7 @@ function syncAction(root: Element): void {
   }
   candidate.onload = loaded
   candidate.onerror = failed
-  candidate.src = WHALE_ASSETS[action]
+  candidate.src = source
   if (candidate.complete && candidate.naturalWidth > 0) loaded()
 }
 
@@ -263,6 +322,7 @@ function syncTime(root: Element): boolean {
   if (timeEl === null) return false
   var source = root.querySelector('[data-shimmer-text]')
   if (source === null) return false
+  timeEl.hidden = !getHudSettings().preferences.showElapsed
   var elapsed = extractElapsed(source.getAttribute('data-shimmer-text') || '')
   if (timeEl.textContent !== elapsed) timeEl.textContent = elapsed
   return true
@@ -282,14 +342,18 @@ function unmount(): void {
   pendingPhrase = ''
   imageEl = null
   imageAction = null
+  imageKey = null
   if (node !== null && node.parentNode !== null) node.parentNode.removeChild(node)
   lastRoot = null
   node = null
   phraseEl = null
+  detachFunHover()
+  funEl = null
   timeEl = null
-  group = 'idle'
-  index = 0
-  lastRotate = 0
+  funCurrent = null
+  funAt = 0
+  funPaused = false
+  poseCursor = 0
 }
 
 /** 只接管唯一运行行；多会话无法可靠关联工具时全部保留官方文案。 */
@@ -313,27 +377,26 @@ function tick(): void {
 
   // DOM 或外部服务短暂不可用时撤销接管，官方那行仍然可见。
   try {
-    var next = groupOfTool(readTool === null ? null : readTool())
+    var activity = readActivity === null ? null : readActivity()
+    if (activity?.phase === 'idle') {
+      unmount()
+      return
+    }
+    if (lastSessionId !== activity?.sessionId) {
+      unmount()
+      lastSessionId = activity?.sessionId
+    }
+    cue = { ...selectCue(activity), action: cue.action }
     if (node === null || node.parentNode !== content) {
       unmount()
       lastRoot = root
-      group = next
       node = mountInto(content)
-      lastRotate = Date.now()
-    } else if (next !== group) {
-      group = next
-      index = 0
-      lastRotate = Date.now()
     }
     if (!syncTime(root)) {
       unmount()
       return
     }
-    var now = Date.now()
-    if (now - lastRotate >= ROTATE_MS && !(activeSkin === 'whale' && motionQuery?.matches)) {
-      lastRotate = now
-      index = (index + 1) % RUNNING_CUES[group].length
-    }
+    syncFun(Boolean(motionQuery?.matches))
     syncAction(root)
     // 最后才隐藏官方文字：挂载、计时和语言读取都已成功。
     root.setAttribute('data-dsh-hud-running-text', '')
@@ -342,14 +405,14 @@ function tick(): void {
   }
 }
 
-/** 开始轮播（幂等）；重新确保状态时也立即检查 DOM。 */
+/** 启动显示同步（幂等）；重新确保状态时也立即检查 DOM。 */
 export function startRunningText(): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return
   tick()
   if (timer === null) timer = window.setInterval(tick, TICK_MS)
 }
 
-/** 停掉轮播并恢复官方文案。 */
+/** 停止显示同步并恢复官方文案。 */
 export function stopRunningText(): void {
   if (timer !== null) {
     window.clearInterval(timer)
@@ -361,15 +424,14 @@ export function stopRunningText(): void {
   unmount()
 }
 
-/** 减弱动态设置切换时重新计拍，不在恢复动画的瞬间跳帧。 */
+/** 减弱动态仅影响表情变体，真实执行状态继续更新。 */
 function onMotionChange(): void {
-  lastRotate = Date.now()
   refreshRunningText()
 }
 
 /** 所有皮肤变更（包括轮询 / focus / storage）都经过这里。 */
 export function syncRunningText(id: RunningSkinId): void {
-  if (id !== 'plane' && id !== 'whale') {
+  if (!isCharacterSkin(id)) {
     stopRunningText()
     return
   }

@@ -29,6 +29,7 @@ export function loadBundle(options = {}) {
     createElement: (type, props, ...children) => ({ type, props, children }),
     useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
     useEffect: () => {},
+    useRef: (initial) => ({ current: initial }),
   }
 
   const windowStub = {
