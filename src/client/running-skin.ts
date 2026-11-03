@@ -37,10 +37,11 @@ export function isRunningSkinId(value: string): value is RunningSkinId {
  * 维护内存状态，持久化失败也不会撤销本次选择。
  * 想换成自己的动画：改下面 `PRESETS` 里对应那一段 CSS 就行，选择器不用动。
  */
+/** 默认 Q版鲸鱼娘；想换成别的动画，改这里或点设置面板。 */
 export var RUNNING_SKIN: RunningSkinId = 'whale'
 /**
  * 设置面板里的方块的顺序。`off` 排第一：想回到原样的人一眼能找到。
- * （默认选中鲸鱼娘；已有存储选择保持不变。）
+ * （默认选中 Q版鲸鱼娘；已有存储选择保持不变。）
  */
 export var SKIN_IDS: RunningSkinId[] = ['off', 'whale', 'cyber-whale', 'longdress-whale']
 

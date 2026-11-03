@@ -137,6 +137,7 @@ test('Every build, typecheck and test recreates the ignored module from src', ()
   assert.ok(ignore.includes('/docs/images/whale-girl/'))
   assert.ok(ignore.includes('/src/client/whale-assets.ts'))
   assert.ok(ignore.includes('/src/client/cyber-whale-assets.ts'))
+  assert.ok(ignore.includes('/src/client/longdress-whale-assets.ts'))
 })
 
 test('Public README images exist separately from the local discussion archive', () => {
