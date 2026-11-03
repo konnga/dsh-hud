@@ -2,6 +2,7 @@
 export interface HudPreferences {
   imageSize: number
   showElapsed: boolean
+  showTurnDuration: boolean
   showGit: boolean
   showTools: boolean
   showBalance: boolean
@@ -16,6 +17,7 @@ export var IMAGE_SIZES = [32, 40, 48, 56, 64, 72, 80, 96, 104]
 export var DEFAULT_PREFERENCES: HudPreferences = {
   imageSize: 56,
   showElapsed: true,
+  showTurnDuration: true,
   showGit: true,
   showTools: true,
   showBalance: true,
@@ -39,6 +41,10 @@ function normalize(raw: unknown): HudPreferences {
     showTimer: typeof value.showTimer === 'boolean' ? value.showTimer : true,
     showElapsed:
       typeof value.showElapsed === 'boolean' ? value.showElapsed : DEFAULT_PREFERENCES.showElapsed,
+    showTurnDuration:
+      typeof value.showTurnDuration === 'boolean'
+        ? value.showTurnDuration
+        : DEFAULT_PREFERENCES.showTurnDuration,
   }
 }
 function parse(raw: string | null): HudPreferences {
@@ -59,6 +65,7 @@ function same(a: HudPreferences, b: HudPreferences): boolean {
   return (
     a.imageSize === b.imageSize &&
     a.showElapsed === b.showElapsed &&
+    a.showTurnDuration === b.showTurnDuration &&
     a.showGit === b.showGit &&
     a.showTools === b.showTools &&
     a.showBalance === b.showBalance &&

@@ -46,6 +46,7 @@ import { watchModelSelection } from './model-watch.js'
 import { ensureRunningSkin, watchRunningSkin, isRunningSkinId, setSkin } from './running-skin.js'
 import { configureRunningText, refreshRunningText } from './running-text.js'
 import { watchRunningActivity } from './running-activity.js'
+import { watchTurnClock } from './turn-clock.js'
 import { createStore } from './store/index.js'
 import type { StoreContext } from './store/types.js'
 import { cssChipsGap, ensureStyles } from './styles-apply.js'
@@ -172,6 +173,15 @@ export function apply(ctx: HudPluginContext): void {
       dispose()
     }
   }, 'dsh-hud: running text')
+
+  // 「本轮结束时刻」后面补耗时：数字抄官方过程行，开关沿用「显示用时」。
+  ctx.effect(function () {
+    return watchTurnClock({
+      enabled: function () {
+        return getHudSettings().preferences.showTurnDuration
+      },
+    })
+  }, 'dsh-hud: turn duration')
 
   ctx.effect(function () {
     return watchRunningSkin()

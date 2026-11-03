@@ -429,4 +429,9 @@ export const CSS = [
   '.dshh-runTime:empty,.dshh-runTime[hidden]{display:none;}',
   // 「本轮结束时刻」后面那截耗时：和时刻同一行同一字号（动作栏本身有 8px 间距），
   // 压暗一档，数字等宽 —— 只当补充读数，不跟操作按钮抢注意力。
+  // 行高必须照抄时刻那颗（`_timeEnd`）的公式，否则两段文字的盒子高度不同，
+  // 在 flex 行里各按自己的盒子居中，看上去就会一高一低。
+  '.dshh-turnDuration{font-size:calc(var(--dsh-content-font-size-secondary,13px) - 1px);',
+  'line-height:calc(24px + var(--dsh-content-font-delta,0px));align-self:center;color:inherit;',
+  'opacity:.72;font-variant-numeric:tabular-nums;white-space:nowrap;}',
 ].join('')

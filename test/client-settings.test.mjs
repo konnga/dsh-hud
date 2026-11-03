@@ -9,7 +9,7 @@ const key = 'dsh-hud:display-settings'
 const skinKey = 'dsh-hud:running-skin'
 const t = (key) => key
 const visibility = { showGit: true, showTools: true, showBalance: true, showTimer: true }
-const defaults = { imageSize: 56, showElapsed: true, ...visibility }
+const defaults = { imageSize: 56, showElapsed: true, showTurnDuration: true, ...visibility }
 
 function fixture(options = {}) {
   const mounted = mountClient(options)
@@ -117,13 +117,18 @@ test('Both display controls save only supported local values; size and elapsed a
     assert.equal(f.input('rice'), undefined)
     assert.equal(
       findAll(f.panel(), (node) => node.props?.role === 'switch').length,
-      4,
-      '「常规」页只剩四颗胶囊开关',
+      5,
+      '「常规」页：四颗胶囊开关 + 每轮耗时',
     )
     assert.equal(
       findAll(f.packsPanel(), (node) => node.props?.['data-setting'] === 'showElapsed').length,
       1,
       '「显示用时」跟着「思考中动画」在表情包页',
+    )
+    assert.equal(
+      findAll(f.packsPanel(), (node) => node.props?.['data-setting'] === 'showTurnDuration').length,
+      0,
+      '每轮耗时的开关在「常规」页，不在表情包页',
     )
     f.change('imageSize', 40)
     f.change('showElapsed', false)

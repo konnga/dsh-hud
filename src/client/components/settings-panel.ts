@@ -60,7 +60,7 @@ export function SettingsPanel(props: SettingsPanelProps): React.ReactElement | n
   if (!state.open) return null
 
   function toggle(
-    key: 'showElapsed' | 'showGit' | 'showTools' | 'showBalance' | 'showTimer',
+    key: 'showElapsed' | 'showTurnDuration' | 'showGit' | 'showTools' | 'showBalance' | 'showTimer',
     label: string,
   ): React.ReactElement {
     var id = 'dshh-setting-' + key
@@ -236,6 +236,14 @@ export function SettingsPanel(props: SettingsPanelProps): React.ReactElement | n
                 toggle('showTools', 'settings.showTools'),
                 toggle('showBalance', 'settings.showBalance'),
                 toggle('showTimer', 'settings.showTimer'),
+              ),
+              // 每轮耗时挂在对话页脚上，和胶囊无关，所以单独一组；分组之间才画线，
+              // 不会像早先那样夹出一条"凭空多出来"的分割线。
+              h(
+                'section',
+                { className: 'dshh-settingsGroup', 'aria-labelledby': 'dshh-chat-title' },
+                h('h3', { id: 'dshh-chat-title' }, t('settings.chat')),
+                toggle('showTurnDuration', 'settings.turnDuration'),
               ),
               state.saveFailed
                 ? h(

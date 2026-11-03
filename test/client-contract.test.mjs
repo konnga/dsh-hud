@@ -133,6 +133,8 @@ test('apply 装上词典、自有样式与两个轮询定时器（面板状态 /
   assert.ok(labels.includes('dsh-hud: dictionaries'))
   assert.ok(labels.includes('dsh-hud: styles'))
   assert.ok(labels.includes('dsh-hud: running skin'))
+  assert.ok(labels.includes('dsh-hud: turn duration'))
+  assert.ok(labels.includes('dsh-hud: turn duration'))
   assert.ok(labels.includes('dsh-hud: status poll'))
   assert.ok(labels.includes('dsh-hud: focus refresh'))
   assert.equal(own.length, 1, '只应插入一份自有样式表')
@@ -148,8 +150,11 @@ test('apply 装上词典、自有样式与两个轮询定时器（面板状态 /
   // "正在跑"）、摘要 30s（只在悬停/⋯ 菜单里按需展示，没必要那么勤问 git）、
   // 账号余额 300s（打的是 DeepSeek 平台的网络，余额按分钟变，密了纯属浪费）。
   //
+  // 那条 1s 的是「本轮结束时刻」后面补耗时的扫描节拍：只比对文本，成本极低。
   // 另外那条 300ms 的是**轮播文案**的检查节拍：在 `plane` / `whale` 皮肤下才起（默认是鲸鱼娘），
   // 换走时 `syncRunningText` 会收掉，所以它出现与否取决于当前皮肤，不算固定节拍。
+  //
+  // 那条 1s 的是「本轮结束时刻」后面补耗时的扫描节拍：只比对文本，成本极低。
   //
   // 模型来源余额那一路**不在这个列表里**：它改成了自适应 `setTimeout` 链 ——
   // 还没问出来时 1 秒重问（重启后宿主常常还没就绪，固定 30 秒会让胶囊空等半分钟），
@@ -159,7 +164,7 @@ test('apply 装上词典、自有样式与两个轮询定时器（面板状态 /
       .map((item) => item.ms)
       .filter((ms) => ms !== 300)
       .sort((left, right) => left - right),
-    [3000, 8000, 30000, 300000],
+    [1000, 3000, 8000, 30000, 300000],
   )
   assert.ok(listeners.has('focus'), '需要 focus 时补一次刷新')
 })
