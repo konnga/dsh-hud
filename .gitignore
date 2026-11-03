@@ -6,3 +6,8 @@ node_modules/
 /docs/images/whale-girl/
 # Recreated automatically from the canonical WebPs by build/test/typecheck.
 /src/client/whale-assets.ts
+/src/client/cyber-whale-assets.ts
+/src/client/longdress-whale-assets.ts
+
+# Tooling scratch space, not part of the plugin.
+/.workbuddy-ai/

@@ -12,7 +12,7 @@ export const generatedFile = fileURLToPath(
 /** Inspect the RIFF and lossless image headers without a build-time image library. */
 export function inspectRuntimeWebp(bytes) {
   const invalid = () => {
-    throw new Error('Expected a complete, static, lossless 112×112 WebP with alpha')
+    throw new Error('Expected a complete, static, lossless 224×224 WebP with alpha')
   }
   if (
     bytes.length < 26 ||
@@ -52,40 +52,48 @@ export function inspectRuntimeWebp(bytes) {
     }
     cursor = next
   }
-  if (!image || image.width !== 112 || image.height !== 112 || !image.alpha) invalid()
+  if (!image || image.width !== 224 || image.height !== 224 || !image.alpha) invalid()
   if (canvas && (canvas.width !== image.width || canvas.height !== image.height || !canvas.alpha))
     invalid()
   return image
 }
 
-export function readWhaleAssets(directory = assetDirectory) {
+export function readAssets(directory, label = 'Whale girl') {
   const assets = {}
   const files = readdirSync(directory)
     .filter((file) => file.endsWith('.webp'))
     .sort()
-  if (files.length === 0) throw new Error('Whale girl: no runtime WebPs found')
+  if (files.length === 0) throw new Error(`${label}: no runtime WebPs found`)
   for (const file of files) {
     if (!/^[a-z][a-z_]*\.webp$/.test(file))
-      throw new Error(`Invalid whale action filename: ${file}`)
+      throw new Error(`Invalid ${label.toLowerCase()} action filename: ${file}`)
     const bytes = readFileSync(resolve(directory, file))
     try {
       inspectRuntimeWebp(bytes)
     } catch (error) {
-      throw new Error(`Whale girl: ${file}: ${error.message}`)
+      throw new Error(`${label}: ${file}: ${error.message}`)
     }
     assets[file.slice(0, -5)] = 'data:image/webp;base64,' + bytes.toString('base64')
   }
   return assets
 }
 
-export function renderWhaleAssets(assets) {
+export function readWhaleAssets(directory = assetDirectory) {
+  return readAssets(directory)
+}
+
+export function renderAssets(assets, directory, variable, type = 'Record<WhaleAction, string>') {
   return (
-    '/** Generated from src/client/assets/whale-girl/*.webp; do not edit. */\n' +
+    `/** Generated from ${directory}; do not edit. */\n` +
     "import type { WhaleAction } from './running-cues.js'\n\n" +
-    '// prettier-ignore\nexport var WHALE_ASSETS: Record<WhaleAction, string> = ' +
+    `// prettier-ignore\nexport var ${variable}: ${type} = ` +
     JSON.stringify(assets, null, 2) +
     '\n'
   )
+}
+
+export function renderWhaleAssets(assets) {
+  return renderAssets(assets, 'src/client/assets/whale-girl/*.webp', 'WHALE_ASSETS')
 }
 
 export function generateWhaleAssets() {
