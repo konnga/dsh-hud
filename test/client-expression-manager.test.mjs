@@ -205,8 +205,13 @@ test('the packs pane keeps vertical-only padding so it does not double the dialo
       .join('')
     assert.match(
       css,
-      /\.dshh-packs\{[^}]*padding:16px 0/,
+      /\.dshh-packs\{[^}]*padding:\d+px 0(?: \d+px)?;/,
       'horizontal inset comes from .dshh-settingsPanel; the pane itself only pads vertically',
+    )
+    assert.doesNotMatch(
+      css,
+      /\.dshh-packs\{[^}]*padding:\d+px \d+px/,
+      '左右不能再写死内边距，否则会和面板的横向留白叠加',
     )
   } finally {
     mounted.dispose()
@@ -268,29 +273,25 @@ test('expression packs drop the intro copy and scroll inside a fixed-height body
   }
 })
 
-test('expression manager reuses the same skin cards as the thinking row and delegates picks', async () => {
+test('packs list renders rows rather than the old skin dropdown', async () => {
   const f = fixture()
   try {
-    const cards = f.nodes((n) => n.props?.className === 'dshh-skinCube')
-    assert.equal(
-      cards.length,
-      5,
-      'four built-ins plus the custom pack, rendered as cards not a select',
-    )
+    // 皮肤卡片搬到设置面板顶部后，这里只剩包列表本身：确认旧的下拉框没有回来，
+    // 且每个包给的是行（带缩略图与动作数），不是一排可选方块。
     assert.equal(
       f.nodes((n) => n.type === 'select' && n.props?.id === 'dshh-pack-active').length,
       0,
       'the old dropdown is gone',
     )
-    assert.deepEqual(
-      cards.map((card) => textOf(card.children[1])),
-      ['skin.off', 'skin.whale', 'skin.cyber-whale', 'skin.longdress-whale', 'Pack'],
+    assert.equal(
+      f.nodes((n) => n.props?.className === 'dshh-skinCube').length,
+      0,
+      '皮肤卡片由设置面板渲染，不属于包列表',
     )
-    assert.equal(cards[1].props['data-active'], '', 'the currently active skin is marked')
-    cards[4].props.onClick()
-    await flush()
-    assert.deepEqual(f.calls.at(-1), ['onSelect', 'custom:test'])
-    assert.equal(cards[1].props['data-active'], '', 'selection waits for the host round-trip')
+    assert.ok(
+      f.nodes((n) => n.props?.className === 'dshh-packCard').length > 0,
+      '包以卡片行的形式列出',
+    )
   } finally {
     f.dispose()
   }

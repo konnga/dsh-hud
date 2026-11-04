@@ -173,10 +173,12 @@ test('Opening and closing settings does not reset event-driven running text', ()
     assert.equal(dom.phrase(root), '正在读取文件')
     f.open()
     assert.equal(f.input('rotateMs'), undefined)
+    // 换事件只更新事实文案，不推进表情（表情跟趣味短语同一拍才换）。
+    const firstPose = dom.image(root).getAttribute('data-action')
     activity = { ...activity, key: 'call-2', step: 2 }
     f.exported.refreshRunningText()
     assert.equal(dom.phrase(root), '正在读取文件')
-    assert.equal(dom.image(root).getAttribute('data-action'), 'reading', '同一全库池的第二张')
+    assert.equal(dom.image(root).getAttribute('data-action'), firstPose, '事件本身不换图')
     const secondPhrase = dom.phrase(root)
     f.close()
     f.open()
@@ -394,9 +396,15 @@ test('Mounted settings panel reacts to gear, preference and close events without
             },
           }
         : originalQuery(selector)
+    // 图片尺寸在「表情包」页；挂到那一页才能读到它。
     mini.mount(f.components['dsh-hud-settings'], { t })
     assert.equal(mini.current(), null)
     open({ currentTarget: { isConnected: false } })
+    // 打开后切到「表情包」页：图片尺寸在那里。
+    rawFind(
+      mini.current(),
+      (node) => node.props?.id === 'dshh-settings-tab-packs',
+    )[0].props.onClick()
     assert.notEqual(mini.current(), null)
     assert.equal(focused, 1, '打开时焦点进入对话框')
     const setting = () =>
@@ -420,7 +428,7 @@ test('Changes made by the native selector appear in the standalone selector, and
   try {
     f.open()
     const standalone = () => {
-      const entry = rawFind(f.panel(), (node) => node?.type?.name === 'SkinRow')[0]
+      const entry = rawFind(f.packsPanel(), (node) => node?.type?.name === 'SkinRow')[0]
       return findAll(entry.type(entry.props), (node) => node.props?.className === 'dshh-skinCube')
     }
     f.nativeButtons()[1].props.onClick()
@@ -522,7 +530,7 @@ test('Interval configuration is absent and old stored interval is dropped on the
     assert.equal(f.input('imageSize').props.value, 48)
     assert.equal(f.input('rotateMs'), undefined)
     assert.equal(
-      findAll(f.panel(), (node) => node.type === 'select').length,
+      findAll(f.packsPanel(), (node) => node.type === 'select').length,
       1,
       'image size only; custom packs now live in the Packs tab, and there is no interval selector',
     )
@@ -602,12 +610,15 @@ test('Legacy playful and rice preferences cannot restrict actions or survive the
       const actions = f.exported.ACTION_POOL
       assert.ok(actions.includes('butterfly'))
       assert.ok(actions.some((action) => action.startsWith('rice_')))
+      // 旧偏好不该限制动作池：每次新事件都照常跟随状态，表情停在当前这张
+      // （换图由趣味短语的节拍决定，与事件无关）。
       const assertEventActions = () => {
-        for (const action of [...actions.slice(1), actions[0]]) {
+        const pose = dom.image(root).getAttribute('data-action')
+        for (let i = 0; i < 4; i += 1) {
           activity = { ...activity, key: `waiting-${++eventIndex}`, step: eventIndex }
           f.exported.refreshRunningText()
           assert.equal(dom.phrase(root), '等待模型响应')
-          assert.equal(dom.image(root).getAttribute('data-action'), action)
+          assert.equal(dom.image(root).getAttribute('data-action'), pose, '事件本身不换图')
         }
       }
       assertEventActions()
