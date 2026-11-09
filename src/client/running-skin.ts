@@ -87,6 +87,10 @@ function notify(): void {
 
 /** 彩色全身图不走 currentColor mask；只接管图片已加载成功的唯一运行行。 */
 var WHALE = [
+  // The host centers its children inside a fixed 28px row. Let the owning row
+  // grow with our image/copy so large skins cannot paint over adjacent chat rows.
+  '[data-chat-running][data-dsh-hud-running-text] [class*="_runningContent"]{',
+  'height:auto;min-height:56px;max-width:100%}',
   '[data-chat-running][data-dsh-hud-running-text] [data-shimmer]{display:none}',
   '[data-chat-running][data-dsh-hud-running-whale] [class*="_runningIcon"]{display:none}',
   '[data-chat-running] .dshh-runWhale{order:-1;width:56px;height:56px;flex:0 0 56px;',
